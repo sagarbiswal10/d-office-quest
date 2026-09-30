@@ -80,9 +80,11 @@ function NetworkLink({ a, b }: { a: number; b: number }) {
   const first = useGame((s) => s.nodes[a]);
   const second = useGame((s) => s.nodes[b]);
   const firewall = useGame((s) => s.firewallFor > 0);
-  const start = NETWORK.nodes[a].pos;
-  const end = NETWORK.nodes[b].pos;
-  if (!first || !second || !start || !end) return null;
+  const startNode = NETWORK.nodes[a];
+  const endNode = NETWORK.nodes[b];
+  if (!first || !second || !startNode || !endNode) return null;
+  const start = startNode.pos;
+  const end = endNode.pos;
   const compromised = first.status === "infected" ? first : second.status === "infected" ? second : null;
   const offline = first.status === "isolated" || second.status === "isolated";
   const color = offline ? "#4f5c65" : compromised?.threat ? THREATS[compromised.threat].color : firewall ? "#66d99d" : "#4ba1ad";
