@@ -57,7 +57,8 @@ export function saveScore(entry: LeaderEntry) {
 }
 
 function infect(nodes: NodeState[], id: number, threat: ThreatType) {
-  if (nodes[id]?.status !== "clean") return false;
+  const node = nodes[id];
+  if (!node || node.status !== "clean") return false;
   nodes[id] = { status: "infected", infection: 0.08, threat, investigated: false, isolatedFor: 0 };
   return true;
 }
@@ -93,6 +94,7 @@ export const useGame = create<GameState>((set, get) => ({
     if (s.phase !== "playing" || s.selected === null) return;
     const node = s.nodes[s.selected];
     const label = NETWORK.nodes[s.selected]?.label ?? "Device";
+    if (!node) return;
     if (node.status !== "infected") { sfx.error(); set({ log: push(s.log, `${label}: no active alert to investigate.`, "info") }); return; }
     if (node.investigated) return;
     sfx.investigate();
@@ -107,6 +109,7 @@ export const useGame = create<GameState>((set, get) => ({
     if (s.phase !== "playing" || s.selected === null) return;
     const node = s.nodes[s.selected];
     const label = NETWORK.nodes[s.selected]?.label ?? "Device";
+    if (!node) return;
     if (node.status !== "infected" || !node.investigated) { sfx.error(); set({ log: push(s.log, `${label}: investigate the alert before isolation.`, "bad") }); return; }
     sfx.isolate();
     const nodes = [...s.nodes];
@@ -136,6 +139,7 @@ export const useGame = create<GameState>((set, get) => ({
 
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i];
+      if (!node) continue;
       if (node.status === "isolated") {
         const left = node.isolatedFor - dt;
         nodes[i] = left <= 0 ? { ...node, status: "clean", isolatedFor: 0 } : { ...node, isolatedFor: left };
@@ -149,7 +153,7 @@ export const useGame = create<GameState>((set, get) => ({
           integrity -= 8;
           sfx.breach();
           nodes[i] = { ...node, infection: 0.58 };
-          const neighbor = NETWORK.neighbors[i].find((id) => nodes[id]?.status === "clean");
+          const neighbor = NETWORK.neighbors[i]?.find((id) => nodes[id]?.status === "clean");
           if (neighbor !== undefined) infect(nodes, neighbor, node.threat);
           log = push(log, `${NETWORK.nodes[i]?.label ?? "Device"}: breach spread to an adjacent system.`, "bad");
         } else nodes[i] = { ...node, infection };

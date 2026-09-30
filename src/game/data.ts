@@ -51,7 +51,13 @@ function buildNetwork() {
   });
   links.push([0, 1], [0, 2], [0, 3], [1, 2], [4, 7], [10, 13], [5, 14]);
   const neighbors: number[][] = nodes.map(() => []);
-  links.forEach(([a, b]) => { neighbors[a].push(b); neighbors[b].push(a); });
+  links.forEach(([a, b]) => {
+    const first = neighbors[a];
+    const second = neighbors[b];
+    if (!first || !second) return;
+    first.push(b);
+    second.push(a);
+  });
   return { nodes, links, neighbors };
 }
 
@@ -66,7 +72,7 @@ export const RANKS = [
 ];
 
 export function rankFor(score: number) {
-  let rank = RANKS[0].name;
+  let rank = "Trainee Analyst";
   for (const candidate of RANKS) if (score >= candidate.min) rank = candidate.name;
   return rank;
 }

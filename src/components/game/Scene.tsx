@@ -61,12 +61,13 @@ function Device({ index }: { index: number }) {
   const phase = useGame((s) => s.phase);
   const group = useRef<THREE.Group>(null);
   const ring = useRef<THREE.Mesh>(null);
-  const color = statusColor(node);
+  const color = node ? statusColor(node) : COLORS.clean;
   useFrame(({ clock }) => {
     const time = clock.elapsedTime;
-    if (group.current) group.current.position.y = node.status === "infected" ? Math.sin(time * 5 + index) * 0.04 : 0;
-    if (ring.current) { ring.current.rotation.z = time * 0.45; const scale = selected ? 1.35 : 1 + (node.status === "infected" ? Math.sin(time * 4) * 0.08 : 0); ring.current.scale.setScalar(scale); }
+    if (group.current) group.current.position.y = node?.status === "infected" ? Math.sin(time * 5 + index) * 0.04 : 0;
+    if (ring.current) { ring.current.rotation.z = time * 0.45; const scale = selected ? 1.35 : 1 + (node?.status === "infected" ? Math.sin(time * 4) * 0.08 : 0); ring.current.scale.setScalar(scale); }
   });
+  if (!def || !node) return null;
   return <group position={def.pos} ref={group} onClick={(event) => { if (phase !== "playing") return; event.stopPropagation(); useGame.getState().select(index); }} onPointerOver={() => { document.body.style.cursor = "pointer"; }} onPointerOut={() => { document.body.style.cursor = ""; }}>
     {def.kind === "server" ? <ServerRack accent={color}/> : def.kind === "router" ? <Router accent={color}/> : <Workstation accent={color}/>} 
     <mesh ref={ring} rotation-x={-Math.PI / 2} position={[0, 0.025, 0]}><ringGeometry args={[0.92, 1.03, 32]}/><meshBasicMaterial color={selected ? COLORS.selected : color} transparent opacity={selected ? 0.95 : 0.52} toneMapped={false}/></mesh>
@@ -81,6 +82,7 @@ function NetworkLink({ a, b }: { a: number; b: number }) {
   const firewall = useGame((s) => s.firewallFor > 0);
   const start = NETWORK.nodes[a].pos;
   const end = NETWORK.nodes[b].pos;
+  if (!first || !second || !start || !end) return null;
   const compromised = first.status === "infected" ? first : second.status === "infected" ? second : null;
   const offline = first.status === "isolated" || second.status === "isolated";
   const color = offline ? "#4f5c65" : compromised?.threat ? THREATS[compromised.threat].color : firewall ? "#66d99d" : "#4ba1ad";

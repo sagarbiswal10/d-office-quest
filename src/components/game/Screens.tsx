@@ -6,7 +6,7 @@ import { setMuted } from "@/game/audio";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-function Leaderboard({ entries, highlight }: { entries: LeaderEntry[]; highlight?: number }) {
+function Leaderboard({ entries, highlight }: { entries: LeaderEntry[]; highlight?: number | undefined }) {
   return <div className="panel p-4"><div className="mb-3 font-display text-sm uppercase text-primary">Top responders</div>{entries.length === 0 && <div className="text-xs text-muted-foreground">No completed shifts yet.</div>}<ol className="space-y-2 font-mono text-xs">{entries.map((entry, i) => <li key={entry.runId ?? `${entry.date}-${i}`} className={cn("grid grid-cols-[1fr_auto] gap-3", i === highlight && "text-warning")}><span>{String(i + 1).padStart(2, "0")}. {entry.name}</span><span>{entry.score.toLocaleString()}</span><span className="col-span-2 text-[10px] text-muted-foreground">{entry.rank}</span></li>)}</ol></div>;
 }
 
