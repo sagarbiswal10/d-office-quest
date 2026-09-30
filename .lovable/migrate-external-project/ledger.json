@@ -1,0 +1,12 @@
+{
+  "capabilities": [
+    {"capability":"application code","source":"uploaded code archive","outcome":"migrate","status":"in_progress","next_action":"verify imported game"},
+    {"capability":"local leaderboard records","source":"browser local storage","outcome":"preserve","status":"in_progress","next_action":"verify replay and score saving"},
+    {"capability":"authentication","source":"none detected","outcome":"not_applicable","status":"verified","next_action":"none"},
+    {"capability":"database and server data","source":"none detected","outcome":"not_applicable","status":"verified","next_action":"none"},
+    {"capability":"external providers and secrets","source":"none detected","outcome":"not_applicable","status":"verified","next_action":"none"},
+    {"capability":"public endpoints and schedules","source":"none detected","outcome":"not_applicable","status":"verified","next_action":"none"},
+    {"capability":"uploaded media","source":"none detected","outcome":"not_applicable","status":"verified","next_action":"none"},
+    {"capability":"production cutover","source":"unpublished project","outcome":"not_applicable","status":"verified","next_action":"none"}
+  ]
+}
