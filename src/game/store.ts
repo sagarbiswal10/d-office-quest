@@ -167,7 +167,7 @@ export const useGame = create<GameState>((set, get) => ({
         if (candidates.length) {
           const id = candidates[(nextThreat * 3 + 2) % candidates.length];
           const threat = CAMPAIGN[nextThreat];
-          if (threat && infect(nodes, id, threat)) {
+          if (id !== undefined && threat && infect(nodes, id, threat)) {
             nextThreat++;
             sfx.alert();
             log = push(log, `Incident ${nextThreat}/${TOTAL_THREATS}: suspicious activity on ${NETWORK.nodes[id]?.label ?? "device"}.`, "info");
