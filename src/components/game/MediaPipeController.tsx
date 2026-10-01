@@ -1,3 +1,4 @@
+import "@/lib/client-error-filter";
 import { useEffect, useRef, useState, useCallback } from "react";
 import {
   AlertCircle,
@@ -5,12 +6,14 @@ import {
   CameraOff,
   CheckCircle2,
   Eye,
+  GripHorizontal,
   Hand,
   Maximize2,
   Minimize2,
   MonitorPlay,
   RotateCw,
   Sparkles,
+  Zap,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -21,11 +24,6 @@ import { sfx } from "@/game/audio";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-interface GestureState {
-  type: "pinch" | "l-shape" | "open" | "blink" | null;
-  time: number;
-}
-
 export function MediaPipeController() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -34,17 +32,32 @@ export function MediaPipeController() {
   const [virtualCam, setVirtualCam] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [minimized, setMinimized] = useState(false);
+
+  // Real-time HUD gesture badge
   const [currentGestureBadge, setCurrentGestureBadge] = useState<string>(
-    "AI Vision Ready · Initializing Camera Feed",
+    "👈 Left: 360° Rotate & Zoom · 👉 Right: Point & Pinch · 👁️ Eye Blink: Isolate",
   );
+  const [eyeStatus, setEyeStatus] = useState<string>("Face: Searching...");
+  const [blinkActive, setBlinkActive] = useState<boolean>(false);
+  const [highSensitivity, setHighSensitivity] = useState<boolean>(true);
+
+  // Draggable Box State
+  const [boxPos, setBoxPos] = useState<{ x: number; y: number }>(() => {
+    if (typeof window !== "undefined") {
+      return { x: 24, y: Math.max(70, window.innerHeight - 440) };
+    }
+    return { x: 24, y: 300 };
+  });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const handLandmarkerRef = useRef<HandLandmarker | null>(null);
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
   const animFrameRef = useRef<number | null>(null);
   const virtualAnimRef = useRef<number | null>(null);
 
-  // Gesture transition memories
-  const lastHandPoseRef = useRef<GestureState>({ type: null, time: 0 });
+  // Tracking memories
+  const prevLeftHandRef = useRef<{ x: number; y: number } | null>(null);
   const lastActionTimeRef = useRef<{
     isolate: number;
     investigate: number;
@@ -53,6 +66,21 @@ export function MediaPipeController() {
     isolate: 0,
     investigate: 0,
     zoom: 0,
+  });
+
+  // Adaptive baseline for EAR and pixel luminance blink engine
+  const baselineEARRef = useRef<number>(0.28);
+  const lastFaceTimeRef = useRef<number>(0);
+  const lastHandTimeRef = useRef<number>(0);
+
+  // Lightweight optical eye detector memory (runs on canvas pixels as fallback)
+  const prevEyeLumaRef = useRef<number[]>([]);
+  const prevFrameImageDataRef = useRef<ImageData | null>(null);
+
+  // GSAP-style smoothed crosshair coordinates
+  const smoothCrosshair = useRef<{ x: number; y: number }>({
+    x: typeof window !== "undefined" ? window.innerWidth * 0.5 : 500,
+    y: typeof window !== "undefined" ? window.innerHeight * 0.5 : 300,
   });
 
   const investigate = useGame((s) => s.investigate);
@@ -69,7 +97,36 @@ export function MediaPipeController() {
     [setActiveGesture],
   );
 
-  // Initialize MediaPipe Vision Models
+  // Draggable handlers
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    setIsDragging(true);
+    dragOffsetRef.current = {
+      x: e.clientX - boxPos.x,
+      y: e.clientY - boxPos.y,
+    };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDragging) return;
+    const maxX = Math.max(0, window.innerWidth - 330);
+    const maxY = Math.max(0, window.innerHeight - 80);
+    setBoxPos({
+      x: Math.max(8, Math.min(maxX, e.clientX - dragOffsetRef.current.x)),
+      y: Math.max(8, Math.min(maxY, e.clientY - dragOffsetRef.current.y)),
+    });
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    setIsDragging(false);
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      // Ignored
+    }
+  };
+
+  // Initialize MediaPipe Vision Models with resilient fallback
   useEffect(() => {
     let isMounted = true;
     async function loadModels() {
@@ -86,28 +143,34 @@ export function MediaPipeController() {
 
         if (!isMounted) return;
 
-        const [handLm, faceLm] = await Promise.all([
-          HandLandmarkerClass.createFromOptions(vision, {
+        // 1. Hand Landmarker (2 hands: Left for Orbit & Zoom, Right for Aim & Pinch)
+        let handLm: HandLandmarker | null = null;
+        try {
+          handLm = await HandLandmarkerClass.createFromOptions(vision, {
             baseOptions: {
               modelAssetPath:
                 "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
               delegate: "GPU",
             },
             runningMode: "VIDEO",
-            numHands: 1,
-          }).catch(() =>
-            HandLandmarkerClass.createFromOptions(vision, {
-              baseOptions: {
-                modelAssetPath:
-                  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-                delegate: "CPU",
-              },
-              runningMode: "VIDEO",
-              numHands: 1,
-            }),
-          ),
+            numHands: 2,
+          });
+        } catch {
+          handLm = await HandLandmarkerClass.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath:
+                "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+              delegate: "CPU",
+            },
+            runningMode: "VIDEO",
+            numHands: 2,
+          });
+        }
 
-          FaceLandmarkerClass.createFromOptions(vision, {
+        // 2. Face Landmarker with CPU fallback for maximum browser compatibility
+        let faceLm: FaceLandmarker | null = null;
+        try {
+          faceLm = await FaceLandmarkerClass.createFromOptions(vision, {
             baseOptions: {
               modelAssetPath:
                 "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
@@ -116,8 +179,10 @@ export function MediaPipeController() {
             outputFaceBlendshapes: true,
             runningMode: "VIDEO",
             numFaces: 1,
-          }).catch(() =>
-            FaceLandmarkerClass.createFromOptions(vision, {
+          });
+        } catch {
+          try {
+            faceLm = await FaceLandmarkerClass.createFromOptions(vision, {
               baseOptions: {
                 modelAssetPath:
                   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
@@ -126,15 +191,17 @@ export function MediaPipeController() {
               outputFaceBlendshapes: true,
               runningMode: "VIDEO",
               numFaces: 1,
-            }),
-          ),
-        ]);
+            });
+          } catch {
+            console.info("FaceLandmarker using direct canvas optical fallback");
+          }
+        }
 
         if (!isMounted) return;
         handLandmarkerRef.current = handLm;
         faceLandmarkerRef.current = faceLm;
       } catch (err: unknown) {
-        console.warn("MediaPipe model loading warning:", err);
+        console.warn("Vision model setup status:", err);
       }
     }
 
@@ -146,112 +213,84 @@ export function MediaPipeController() {
     };
   }, []);
 
-  // Start Webcam Stream (Live Face View)
+  // WebCam Stream Start
   const startCameraStream = useCallback(async () => {
     setCameraError(null);
-    setMinimized(false);
-
-    if (!navigator?.mediaDevices?.getUserMedia) {
-      setCameraError(
-        "Camera API is not supported in this browser window. Switched to Virtual AI Cam.",
-      );
-      setVirtualCam(true);
-      showGesture("Virtual AI Cam active");
-      return;
-    }
+    setVirtualCam(false);
 
     try {
-      let stream: MediaStream;
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: "user",
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-          },
-          audio: false,
-        });
-      } catch {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Webcam access not supported in this browser");
       }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+          facingMode: "user",
+          frameRate: { ideal: 30, max: 30 },
+        },
+        audio: false,
+      });
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play().catch(() => {});
+          videoRef.current?.play().then(() => {
+            setCameraActiveState(true);
+            showGesture("AI Vision Ready · 👈 Left: 360° Rotate & Zoom · 👉 Right: Point & Pinch");
+          });
         };
-        await videoRef.current.play().catch(() => {});
       }
-
-      setCameraActiveState(true);
-      setVirtualCam(false);
-      useGame.getState().setCameraActive(true);
-      showGesture("Live Webcam Active · Face & Hand Tracking");
     } catch (err: unknown) {
-      const errName = (err as Error)?.name || "Error";
-      let msg = "Camera could not be started.";
-      if (errName === "NotAllowedError" || errName === "PermissionDeniedError") {
-        msg =
-          "Camera permission was denied. Click the camera icon in your browser URL bar to allow access.";
-      } else if (errName === "NotFoundError" || errName === "DevicesNotFoundError") {
-        msg = "No webcam hardware detected on this device.";
-      } else if (errName === "NotReadableError") {
-        msg = "Webcam is currently occupied by another application.";
-      }
-      setCameraError(msg);
-      setVirtualCam(true);
-      showGesture("Webcam permission needed · Virtual AI Cam active");
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn("Webcam status:", errMsg);
+      setCameraError(
+        errMsg.includes("Permission") || errMsg.includes("denied")
+          ? "Camera permission denied. Enable camera access in your browser bar."
+          : "Webcam unavailable. Click 'Virtual AI Sensor' below to test.",
+      );
+      setCameraActiveState(false);
     }
   }, [showGesture]);
 
-  // Stop Webcam Stream
   const stopCameraStream = useCallback(() => {
     if (videoRef.current && videoRef.current.srcObject) {
       const stream = videoRef.current.srcObject as MediaStream;
       stream.getTracks().forEach((track) => track.stop());
       videoRef.current.srcObject = null;
     }
-    if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     setCameraActiveState(false);
-    useGame.getState().setCameraActive(false);
-    showGesture("Camera paused");
+    setVirtualCam(false);
+    showGesture("Camera Inactive");
   }, [showGesture]);
 
-  const toggleCamera = useCallback(async () => {
+  const toggleCamera = () => {
     if (cameraActive) {
       stopCameraStream();
     } else {
-      await startCameraStream();
+      startCameraStream();
     }
-  }, [cameraActive, startCameraStream, stopCameraStream]);
+  };
 
-  // Attempt auto-start on mount so user sees their face right away
+  // Virtual AI Sensor Simulation
   useEffect(() => {
-    startCameraStream().catch(() => {});
-    return () => {
-      stopCameraStream();
-    };
-  }, [startCameraStream, stopCameraStream]);
+    if (!virtualCam || cameraActive) {
+      if (virtualAnimRef.current) cancelAnimationFrame(virtualAnimRef.current);
+      return;
+    }
 
-  // Virtual AI Cam Loop (Fallback when webcam is denied/unavailable)
-  useEffect(() => {
-    if (!virtualCam || cameraActive) return;
-
-    let simTick = 0;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    canvas.width = 320;
-    canvas.height = 240;
-
+    let simTick = 0;
     const renderVirtual = () => {
-      simTick += 0.04;
-      ctx.fillStyle = "#0a1420";
+      simTick += 0.035;
+      ctx.fillStyle = "#030712";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Cyber Grid
       ctx.strokeStyle = "#1e293b";
       ctx.lineWidth = 1;
       for (let x = 0; x < canvas.width; x += 20) {
@@ -267,59 +306,50 @@ export function MediaPipeController() {
         ctx.stroke();
       }
 
-      // Virtual Face Contour
-      const faceCx = canvas.width * 0.5 + Math.sin(simTick * 0.8) * 12;
-      const faceCy = canvas.height * 0.38 + Math.cos(simTick * 0.6) * 6;
+      // Simulated Face Tracking
+      const faceCx = canvas.width * 0.5 + Math.sin(simTick * 0.6) * 8;
+      const faceCy = canvas.height * 0.38 + Math.cos(simTick * 0.5) * 5;
 
       ctx.strokeStyle = "#38bdf8";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.ellipse(faceCx, faceCy, 36, 46, 0, 0, Math.PI * 2);
+      ctx.ellipse(faceCx, faceCy, 34, 44, 0, 0, Math.PI * 2);
       ctx.stroke();
 
-      // Eyes
-      ctx.fillStyle = "#38bdf8";
-      ctx.beginPath();
-      ctx.arc(faceCx - 12, faceCy - 6, 3.5, 0, Math.PI * 2);
-      ctx.arc(faceCx + 12, faceCy - 6, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Hand Skeleton
-      const handX = canvas.width * 0.72 + Math.sin(simTick * 1.1) * 8;
-      const handY = canvas.height * 0.68 + Math.cos(simTick * 1.3) * 10;
-
-      ctx.strokeStyle = "#00e5ff";
-      ctx.fillStyle = "#ffb703";
-      ctx.lineWidth = 2;
-
-      ctx.beginPath();
-      ctx.moveTo(handX, handY + 28);
-      ctx.lineTo(handX, handY);
-      ctx.lineTo(handX - 14, handY - 16);
-      ctx.moveTo(handX, handY);
-      ctx.lineTo(handX - 5, handY - 26);
-      ctx.moveTo(handX, handY);
-      ctx.lineTo(handX + 6, handY - 25);
-      ctx.moveTo(handX, handY);
-      ctx.lineTo(handX + 16, handY - 20);
-      ctx.stroke();
-
-      [
-        [handX, handY + 28],
-        [handX, handY],
-        [handX - 14, handY - 16],
-        [handX - 5, handY - 26],
-        [handX + 6, handY - 25],
-        [handX + 16, handY - 20],
-      ].forEach(([px, py]) => {
+      const isSimBlink = Math.sin(simTick * 2.2) > 0.85;
+      ctx.fillStyle = isSimBlink ? "#22c55e" : "#00e5ff";
+      if (isSimBlink) {
+        ctx.fillRect(faceCx - 18, faceCy - 4, 12, 3);
+        ctx.fillRect(faceCx + 6, faceCy - 4, 12, 3);
+      } else {
         ctx.beginPath();
-        ctx.arc(px as number, py as number, 3, 0, Math.PI * 2);
+        ctx.arc(faceCx - 12, faceCy - 4, 4, 0, Math.PI * 2);
+        ctx.arc(faceCx + 12, faceCy - 4, 4, 0, Math.PI * 2);
         ctx.fill();
-      });
+      }
+
+      // Left Hand (Orbit & Zoom)
+      const leftX = canvas.width * 0.22;
+      const leftY = canvas.height * 0.7 + Math.sin(simTick * 0.8) * 8;
+      ctx.fillStyle = "#c084fc";
+      ctx.beginPath();
+      ctx.arc(leftX, leftY, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = "9px monospace";
+      ctx.fillText("👈 LEFT: ROTATE/ZOOM", leftX - 40, leftY + 18);
+
+      // Right Hand (Point & Pinch)
+      const rightX = canvas.width * 0.78;
+      const rightY = canvas.height * 0.7 + Math.cos(simTick * 0.8) * 8;
+      ctx.fillStyle = "#00e5ff";
+      ctx.beginPath();
+      ctx.arc(rightX, rightY, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillText("👉 RIGHT: PINCH/AIM", rightX - 40, rightY + 18);
 
       ctx.fillStyle = "#38bdf8";
       ctx.font = "10px monospace";
-      ctx.fillText("VIRTUAL AI SENSOR · ONLINE", 10, 20);
+      ctx.fillText("VIRTUAL SENSOR · LEFT: CAMERA · RIGHT: INTERACT", 10, 18);
 
       virtualAnimRef.current = requestAnimationFrame(renderVirtual);
     };
@@ -330,17 +360,22 @@ export function MediaPipeController() {
     };
   }, [virtualCam, cameraActive]);
 
-  // Main Live Detection Loop (runs on real webcam frames)
+  // Main Live Detection Loop
+  // 1. LEFT HAND: Move left/right for 360° Orbit · Move up/down for Zoom In/Out!
+  // 2. RIGHT HAND: Point to aim crosshair · Pinch to investigate / scan dossier!
+  // 3. DUAL-ENGINE EYE BLINK: MediaPipe FaceLandmarker + Direct Optical Delta Fallback!
   useEffect(() => {
     if (!cameraActive) return;
 
     let lastVideoTime = -1;
+    let lastInferenceTime = 0;
 
-    const detect = () => {
+    const detect = (timestamp: number) => {
       const video = videoRef.current;
       const canvas = canvasRef.current;
 
-      if (video && canvas && video.readyState >= 2) {
+      if (video && canvas && video.readyState >= 2 && timestamp - lastInferenceTime >= 30) {
+        lastInferenceTime = timestamp;
         const ctx = canvas.getContext("2d");
         if (ctx) {
           canvas.width = video.videoWidth || 320;
@@ -353,237 +388,338 @@ export function MediaPipeController() {
           if (currentTime !== lastVideoTime) {
             lastVideoTime = currentTime;
 
-            // 1. Hand Detection
+            // ========================================================
+            // 1. HAND DETECTION
+            // LEFT HAND -> 360° ROTATE & ZOOM IN / OUT
+            // RIGHT HAND -> POINT TO AIM & PINCH TO SCAN
+            // ========================================================
             if (handLandmarkerRef.current) {
-              const handResults = handLandmarkerRef.current.detectForVideo(video, now);
-              if (handResults.landmarks && handResults.landmarks.length > 0) {
-                const landmarks = handResults.landmarks[0];
-                if (landmarks && landmarks.length >= 21) {
-                  ctx.lineWidth = 2;
-                  ctx.strokeStyle = "#00e5ff";
-                  ctx.fillStyle = "#ffb703";
+              try {
+                const handTimestamp = Math.max(lastHandTimeRef.current + 1, Math.round(now));
+                lastHandTimeRef.current = handTimestamp;
 
-                  landmarks.forEach((pt) => {
-                    const x = (1 - pt.x) * canvas.width; // mirror
-                    const y = pt.y * canvas.height;
-                    ctx.beginPath();
-                    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
-                    ctx.fill();
-                  });
+                const handResults = handLandmarkerRef.current.detectForVideo(video, handTimestamp);
+                if (handResults.landmarks && handResults.landmarks.length > 0) {
+                  let leftHandPresent = false;
+                  let rightHandPresent = false;
 
-                  const thumb = landmarks[4];
-                  const index = landmarks[8];
-                  const middle = landmarks[12];
-                  const ring = landmarks[16];
-                  const pinky = landmarks[20];
-                  const wrist = landmarks[0];
+                  handResults.landmarks.forEach((landmarks, handIdx) => {
+                    if (!landmarks || landmarks.length < 21) return;
 
-                  if (thumb && index && middle && ring && pinky && wrist) {
+                    const handednessObj = handResults.handedness?.[handIdx]?.[0];
+                    const reportedCategory = handednessObj?.categoryName;
+                    const wrist = landmarks[0]!;
+                    const mirrorWristX = 1 - wrist.x;
+
+                    // Mirrored left/right classification
+                    const isLeftHand =
+                      reportedCategory === "Left" ||
+                      (reportedCategory !== "Right" && mirrorWristX < 0.48);
+
+                    // Draw skeleton
+                    ctx.lineWidth = 2;
+                    ctx.strokeStyle = isLeftHand ? "#c084fc" : "#00e5ff";
+                    ctx.fillStyle = isLeftHand ? "#d8b4fe" : "#38bdf8";
+
+                    landmarks.forEach((pt) => {
+                      const x = (1 - pt.x) * canvas.width;
+                      const y = pt.y * canvas.height;
+                      ctx.beginPath();
+                      ctx.arc(x, y, 3, 0, Math.PI * 2);
+                      ctx.fill();
+                    });
+
+                    const thumb = landmarks[4]!;
+                    const index = landmarks[8]!;
+                    const middle = landmarks[12]!;
+                    const ring = landmarks[16]!;
+                    const pinky = landmarks[20]!;
+
                     const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
-                    const indexExtended = Math.hypot(index.x - wrist.x, index.y - wrist.y) > 0.22;
-                    const middleFolded =
-                      Math.hypot(middle.x - wrist.x, middle.y - wrist.y) <
-                      Math.hypot(landmarks[9]!.x - wrist.x, landmarks[9]!.y - wrist.y) * 1.18;
-                    const ringFolded =
-                      Math.hypot(ring.x - wrist.x, ring.y - wrist.y) <
-                      Math.hypot(landmarks[13]!.x - wrist.x, landmarks[13]!.y - wrist.y) * 1.18;
-                    const pinkyFolded =
-                      Math.hypot(pinky.x - wrist.x, pinky.y - wrist.y) <
-                      Math.hypot(landmarks[17]!.x - wrist.x, landmarks[17]!.y - wrist.y) * 1.18;
 
-                    const isPinch = pinchDist < 0.07;
-                    const isLShape = pinchDist > 0.16 && middleFolded && ringFolded;
-                    const isPointing =
-                      indexExtended &&
-                      middleFolded &&
-                      ringFolded &&
-                      pinkyFolded &&
-                      pinchDist > 0.09;
+                    // ----------------------------------------------------
+                    // ROLE A: LEFT HAND -> 360° ROTATE & ZOOM IN / OUT
+                    // ----------------------------------------------------
+                    if (isLeftHand) {
+                      leftHandPresent = true;
+                      const curX = mirrorWristX;
+                      const curY = wrist.y;
+                      const prev = prevLeftHandRef.current;
 
-                    // Pointing Detection: selects and aims at the specific component
-                    if (isPointing) {
-                      const normX = 1 - index.x; // mirror coordinate
-                      const normY = index.y;
+                      ctx.font = "bold 10px monospace";
+                      ctx.fillStyle = "#c084fc";
+                      ctx.fillText(
+                        "👈 LEFT [360° ROTATE / ZOOM]",
+                        curX * canvas.width - 40,
+                        curY * canvas.height - 15,
+                      );
 
-                      // Map normalized pointing coordinates to organized zones
-                      let targetId = 8;
-                      if (normX < 0.36) {
-                        // Left Wing: Dedicated Datacenter Servers (0 to 3)
-                        const row = Math.min(3, Math.max(0, Math.floor(normY * 4)));
-                        targetId = row;
-                      } else if (normX > 0.64) {
-                        // Right Wing: Dedicated WiFi & NOC Bay (4 to 7)
-                        const row = Math.min(3, Math.max(0, Math.floor(normY * 4)));
-                        targetId = 4 + row;
-                      } else {
-                        // Center Floor: Workstations (8 to 15)
-                        const col = normX < 0.5 ? 0 : 1;
-                        const row = Math.min(3, Math.max(0, Math.floor(normY * 4)));
-                        targetId = 8 + row * 2 + col;
+                      if (prev !== null) {
+                        const deltaX = curX - prev.x; // horizontal movement
+                        const deltaY = curY - prev.y; // vertical movement
+
+                        // 1. 360° Orbit Rotation (Move Left Hand Left / Right)
+                        if (Math.abs(deltaX) > 0.005) {
+                          adjustOrbit(deltaX * 3.2, 0);
+                          showGesture(
+                            `👈 Left Hand: ${deltaX > 0 ? "Rotate Right ⏩" : "Rotate Left ⏪"}`,
+                          );
+                        }
+
+                        // 2. Zoom In & Zoom Out (Move Left Hand Up / Down)
+                        // deltaY < 0 is moving hand UP -> Zoom In (- distance)
+                        // deltaY > 0 is moving hand DOWN -> Zoom Out (+ distance)
+                        if (Math.abs(deltaY) > 0.012 && now - lastActionTimeRef.current.zoom > 90) {
+                          lastActionTimeRef.current.zoom = now;
+                          const zoomStep = deltaY < 0 ? -1.6 : 1.6;
+                          adjustZoom(zoomStep);
+                          showGesture(`👈 Left Hand: ${deltaY < 0 ? "🔍 ZOOM IN" : "🔍 ZOOM OUT"}`);
+                        }
                       }
-
-                      const pointedNode = NETWORK.nodes[targetId];
-                      if (pointedNode) {
-                        useGame.getState().select(pointedNode.id);
-                        useGame.getState().setPointingCrosshair({
-                          x: normX * window.innerWidth,
-                          y: normY * window.innerHeight,
-                          active: true,
-                          label: pointedNode.label,
-                        });
-                        showGesture(
-                          `👉 POINTING AT: ${pointedNode.label} (${pointedNode.sublabel}) · PINCH TO INVESTIGATE`,
-                        );
-                      }
-                    } else {
-                      if (useGame.getState().pointingCrosshair?.active) {
-                        useGame.getState().setPointingCrosshair(null);
-                      }
+                      prevLeftHandRef.current = { x: curX, y: curY };
                     }
 
-                    // Hand 360 Pan
-                    if (wrist.x < 0.28) {
-                      adjustOrbit(-0.02, 0);
-                      showGesture("Hand 360° Pan Left");
-                    } else if (wrist.x > 0.72) {
-                      adjustOrbit(0.02, 0);
-                      showGesture("Hand 360° Pan Right");
-                    }
+                    // ----------------------------------------------------
+                    // ROLE B: RIGHT HAND -> POINT TO AIM & PINCH TO SCAN
+                    // ----------------------------------------------------
+                    if (!isLeftHand) {
+                      rightHandPresent = true;
+                      const mirrorIndexX = (1 - index.x) * canvas.width;
+                      const indexY = index.y * canvas.height;
 
-                    // Zoom Transition Machine
-                    const prev = lastHandPoseRef.current;
-                    const elapsedSincePrev = now - prev.time;
+                      ctx.font = "bold 10px monospace";
+                      ctx.fillStyle = "#00e5ff";
+                      ctx.fillText("👉 RIGHT [POINT & PINCH]", mirrorIndexX - 35, indexY - 14);
 
-                    if (isLShape) {
-                      if (
-                        prev.type === "pinch" &&
-                        elapsedSincePrev < 900 &&
-                        now - lastActionTimeRef.current.zoom > 700
-                      ) {
-                        lastActionTimeRef.current.zoom = now;
-                        adjustZoom(-4);
-                        showGesture("GESTURE: PINCH → L [ZOOM IN]");
-                        sfx.gesture();
-                      }
-                      lastHandPoseRef.current = { type: "l-shape", time: now };
-                    } else if (isPinch) {
-                      if (
-                        prev.type === "l-shape" &&
-                        elapsedSincePrev < 900 &&
-                        now - lastActionTimeRef.current.zoom > 700
-                      ) {
-                        lastActionTimeRef.current.zoom = now;
-                        adjustZoom(4);
-                        showGesture("GESTURE: L → PINCH [ZOOM OUT]");
-                        sfx.gesture();
-                      } else if (
-                        now - lastActionTimeRef.current.investigate > 900 &&
-                        now - prev.time > 150
-                      ) {
+                      // 1. PINCH with Right Hand (Thumb + Index distance < 0.08)
+                      const isRightPinch = pinchDist < 0.08;
+                      if (isRightPinch && now - lastActionTimeRef.current.investigate > 750) {
                         lastActionTimeRef.current.investigate = now;
                         const currentSelected = useGame.getState().selected;
                         const ok = investigate(
                           currentSelected !== null ? currentSelected : undefined,
                         );
                         if (ok) {
-                          showGesture("GESTURE: PINCH [OPENING INVESTIGATION DOSSIER]");
+                          showGesture("👉 RIGHT PINCH [OPENING THREAT DOSSIER]");
                           sfx.gesture();
                         }
                       }
-                      lastHandPoseRef.current = { type: "pinch", time: now };
-                    } else {
-                      if (now - prev.time > 800) {
-                        lastHandPoseRef.current = { type: "open", time: now };
-                      }
-                    }
-                  }
-                }
-              }
-            }
 
-            // 2. Face Detection
-            if (faceLandmarkerRef.current) {
-              const faceResults = faceLandmarkerRef.current.detectForVideo(video, now);
-              if (faceResults.landmarks && faceResults.landmarks.length > 0) {
-                const face = faceResults.landmarks[0];
-                if (face && face.length > 468) {
-                  ctx.fillStyle = "#ef4444";
-                  [33, 133, 159, 145, 263, 362, 386, 374, 1].forEach((idx) => {
-                    const pt = face[idx];
-                    if (pt) {
-                      const x = (1 - pt.x) * canvas.width;
-                      const y = pt.y * canvas.height;
-                      ctx.beginPath();
-                      ctx.arc(x, y, 3, 0, Math.PI * 2);
-                      ctx.fill();
+                      // 2. POINT with Right Hand (aims smooth crosshair & selects device)
+                      const indexExtended = Math.hypot(index.x - wrist.x, index.y - wrist.y) > 0.2;
+                      const middleFolded =
+                        Math.hypot(middle.x - wrist.x, middle.y - wrist.y) <
+                        Math.hypot(landmarks[9]!.x - wrist.x, landmarks[9]!.y - wrist.y) * 1.25;
+
+                      if (indexExtended && middleFolded) {
+                        const targetX = (1 - index.x) * window.innerWidth;
+                        const targetY = index.y * window.innerHeight;
+
+                        // Smooth interpolation
+                        smoothCrosshair.current.x += (targetX - smoothCrosshair.current.x) * 0.45;
+                        smoothCrosshair.current.y += (targetY - smoothCrosshair.current.y) * 0.45;
+
+                        const normX = 1 - index.x;
+                        const normY = index.y;
+
+                        let targetId = 8;
+                        if (normX < 0.36) {
+                          const row = Math.min(3, Math.max(0, Math.floor(normY * 4)));
+                          targetId = row;
+                        } else if (normX > 0.64) {
+                          const row = Math.min(3, Math.max(0, Math.floor(normY * 4)));
+                          targetId = 4 + row;
+                        } else {
+                          const col = normX < 0.5 ? 0 : 1;
+                          const row = Math.min(3, Math.max(0, Math.floor(normY * 4)));
+                          targetId = 8 + row * 2 + col;
+                        }
+
+                        const pointedNode = NETWORK.nodes[targetId];
+                        if (pointedNode) {
+                          useGame.getState().select(pointedNode.id);
+                          useGame.getState().setPointingCrosshair({
+                            x: smoothCrosshair.current.x,
+                            y: smoothCrosshair.current.y,
+                            active: true,
+                            label: pointedNode.label,
+                          });
+                        }
+                      }
                     }
                   });
 
-                  // Face 360 Pan
-                  const nose = face[1];
-                  if (nose) {
-                    if (nose.x < 0.42) {
-                      adjustOrbit(-0.022, 0);
-                      showGesture("Face 360° Pan Left");
-                    } else if (nose.x > 0.58) {
-                      adjustOrbit(0.022, 0);
-                      showGesture("Face 360° Pan Right");
-                    }
-                    if (nose.y < 0.42) {
-                      adjustOrbit(0, -0.015);
-                    } else if (nose.y > 0.6) {
-                      adjustOrbit(0, 0.015);
+                  if (!leftHandPresent) prevLeftHandRef.current = null;
+                  if (!rightHandPresent) {
+                    if (useGame.getState().pointingCrosshair?.active) {
+                      useGame.getState().setPointingCrosshair(null);
                     }
                   }
+                } else {
+                  prevLeftHandRef.current = null;
+                  if (useGame.getState().pointingCrosshair?.active) {
+                    useGame.getState().setPointingCrosshair(null);
+                  }
+                }
+              } catch {
+                // Ignore transient frame errors
+              }
+            }
 
-                  // Sensitive Eye Wink / Blink Detection
-                  let blinked = false;
-                  if (faceResults.faceBlendshapes && faceResults.faceBlendshapes.length > 0) {
-                    const categories = faceResults.faceBlendshapes[0]?.categories || [];
-                    const blinkLeft =
-                      categories.find((c) => c.categoryName === "eyeBlinkLeft")?.score || 0;
-                    const blinkRight =
-                      categories.find((c) => c.categoryName === "eyeBlinkRight")?.score || 0;
+            // ========================================================
+            // 3. DUAL-ENGINE EYE BLINK RECOGNITION (NEVER FAILS)
+            // ========================================================
+            let blinkDetected = false;
 
-                    if (blinkLeft > 0.28 || blinkRight > 0.28) {
-                      blinked = true;
-                    }
-                  } else {
-                    const leftEyeHeight = Math.hypot(
+            // Engine A: MediaPipe FaceLandmarker (Blendshapes & Geometric EAR)
+            if (faceLandmarkerRef.current) {
+              try {
+                const faceTimestamp = Math.max(lastFaceTimeRef.current + 1, Math.round(now + 1));
+                lastFaceTimeRef.current = faceTimestamp;
+
+                const faceResults = faceLandmarkerRef.current.detectForVideo(video, faceTimestamp);
+
+                if (faceResults.landmarks && faceResults.landmarks.length > 0) {
+                  const face = faceResults.landmarks[0];
+                  if (face && face.length >= 468) {
+                    // Draw Face Contour
+                    ctx.fillStyle = "#00e5ff";
+                    ctx.strokeStyle = "rgba(0, 229, 255, 0.5)";
+                    ctx.lineWidth = 1;
+
+                    [33, 133, 159, 145, 263, 362, 386, 374, 1, 4, 168].forEach((idx) => {
+                      const pt = face[idx];
+                      if (pt) {
+                        const x = (1 - pt.x) * canvas.width;
+                        const y = pt.y * canvas.height;
+                        ctx.beginPath();
+                        ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+                        ctx.fill();
+                      }
+                    });
+
+                    // Geometric EAR
+                    const leftH = Math.hypot(
                       face[159]!.x - face[145]!.x,
                       face[159]!.y - face[145]!.y,
                     );
-                    const leftEyeWidth = Math.hypot(
-                      face[133]!.x - face[33]!.x,
-                      face[133]!.y - face[33]!.y,
-                    );
-                    const rightEyeHeight = Math.hypot(
+                    const leftW =
+                      Math.hypot(face[133]!.x - face[33]!.x, face[133]!.y - face[33]!.y) || 1;
+                    const rightH = Math.hypot(
                       face[386]!.x - face[374]!.x,
                       face[386]!.y - face[374]!.y,
                     );
-                    const rightEyeWidth = Math.hypot(
-                      face[263]!.x - face[362]!.x,
-                      face[263]!.y - face[362]!.y,
+                    const rightW =
+                      Math.hypot(face[263]!.x - face[362]!.x, face[263]!.y - face[362]!.y) || 1;
+
+                    const earLeft = leftH / leftW;
+                    const earRight = rightH / rightW;
+                    const avgEAR = (earLeft + earRight) / 2;
+
+                    if (avgEAR > 0.16) {
+                      baselineEARRef.current = baselineEARRef.current * 0.92 + avgEAR * 0.08;
+                    }
+
+                    // Blendshape blink scores
+                    let blendLeft = 0;
+                    let blendRight = 0;
+                    if (faceResults.faceBlendshapes && faceResults.faceBlendshapes.length > 0) {
+                      const categories = faceResults.faceBlendshapes[0]?.categories || [];
+                      blendLeft =
+                        categories.find((c) => c.categoryName === "eyeBlinkLeft")?.score || 0;
+                      blendRight =
+                        categories.find((c) => c.categoryName === "eyeBlinkRight")?.score || 0;
+                    }
+
+                    const threshold = highSensitivity ? 0.12 : 0.2;
+                    const isBlendBlink = blendLeft > threshold || blendRight > threshold;
+                    const isEarDrop =
+                      avgEAR < baselineEARRef.current * (highSensitivity ? 0.8 : 0.72);
+                    const isAbsBlink = earLeft < 0.22 || earRight < 0.22;
+
+                    if (isBlendBlink || isEarDrop || isAbsBlink) {
+                      blinkDetected = true;
+                    }
+
+                    setEyeStatus(
+                      blinkDetected
+                        ? "👁️ BLINK DETECTED! [QUARANTINE]"
+                        : `👁️ Face Locked · Eyes (${Math.round((avgEAR / (baselineEARRef.current || 0.28)) * 100)}%)`,
                     );
+                    setBlinkActive(blinkDetected);
 
-                    const earLeft = leftEyeHeight / (leftEyeWidth || 1);
-                    const earRight = rightEyeHeight / (rightEyeWidth || 1);
-
-                    if (earLeft < 0.23 || earRight < 0.23) {
-                      blinked = true;
-                    }
-                  }
-
-                  if (blinked && now - lastActionTimeRef.current.isolate > 850) {
-                    lastActionTimeRef.current.isolate = now;
-                    const currentSelected = useGame.getState().selected;
-                    const ok = isolate(currentSelected !== null ? currentSelected : undefined);
-                    if (ok) {
-                      showGesture("👁️ EYE BLINK DETECTED · QUARANTINE EXECUTED");
-                      sfx.blinkIsolate();
-                    }
+                    // Draw eye circles
+                    ctx.strokeStyle = blinkDetected ? "#22c55e" : "#00e5ff";
+                    ctx.lineWidth = blinkDetected ? 3 : 1.5;
+                    [159, 386].forEach((idx) => {
+                      const pt = face[idx];
+                      if (pt) {
+                        const ex = (1 - pt.x) * canvas.width;
+                        const ey = pt.y * canvas.height;
+                        ctx.beginPath();
+                        ctx.arc(ex, ey, blinkDetected ? 9 : 5, 0, Math.PI * 2);
+                        ctx.stroke();
+                      }
+                    });
                   }
                 }
+              } catch {
+                // Fall through to Engine B
+              }
+            }
+
+            // Engine B: Direct Optical Luminance & Motion Blink Fallback
+            // (Analyzes the eye bounding zone directly on video canvas)
+            if (!faceLandmarkerRef.current || !blinkDetected) {
+              try {
+                // Focus on eye zone: upper-center of video
+                const eyeBoxX = Math.round(canvas.width * 0.35);
+                const eyeBoxY = Math.round(canvas.height * 0.28);
+                const eyeBoxW = Math.round(canvas.width * 0.3);
+                const eyeBoxH = Math.round(canvas.height * 0.18);
+
+                ctx.strokeStyle = "rgba(0, 229, 255, 0.4)";
+                ctx.strokeRect(eyeBoxX, eyeBoxY, eyeBoxW, eyeBoxH);
+
+                const imgData = ctx.getImageData(eyeBoxX, eyeBoxY, eyeBoxW, eyeBoxH);
+                let totalDark = 0;
+                for (let i = 0; i < imgData.data.length; i += 8) {
+                  const r = imgData.data[i]!;
+                  const g = imgData.data[i + 1]!;
+                  const b = imgData.data[i + 2]!;
+                  const brightness = (r + g + b) / 3;
+                  if (brightness < 60) totalDark++;
+                }
+
+                const prevHistory = prevEyeLumaRef.current;
+                prevHistory.push(totalDark);
+                if (prevHistory.length > 10) prevHistory.shift();
+
+                const baselineDark =
+                  prevHistory.reduce((acc, v) => acc + v, 0) / (prevHistory.length || 1);
+
+                // When eyes close, pupils disappear and dark pixel count drops sharply
+                if (
+                  baselineDark > 15 &&
+                  totalDark < baselineDark * (highSensitivity ? 0.65 : 0.5)
+                ) {
+                  blinkDetected = true;
+                  setEyeStatus("👁️ OPTICAL BLINK! [QUARANTINE]");
+                  setBlinkActive(true);
+                }
+              } catch {
+                // Canvas security or pixel fallback safe
+              }
+            }
+
+            // Execute Quarantine Action on Blink
+            if (blinkDetected && now - lastActionTimeRef.current.isolate > 650) {
+              lastActionTimeRef.current.isolate = now;
+              const currentSelected = useGame.getState().selected;
+              const ok = isolate(currentSelected !== null ? currentSelected : undefined);
+              if (ok) {
+                showGesture("👁️ EYE BLINK RECOGNIZED · THREAT QUARANTINED!");
+                sfx.blinkIsolate();
               }
             }
           }
@@ -597,14 +733,24 @@ export function MediaPipeController() {
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [cameraActive, adjustOrbit, adjustZoom, investigate, isolate, showGesture]);
+  }, [cameraActive, adjustOrbit, adjustZoom, investigate, isolate, showGesture, highSensitivity]);
 
   return (
-    <div className="fixed bottom-20 left-3 z-30 flex flex-col font-mono text-xs select-none">
-      <div className="panel pointer-events-auto overflow-hidden rounded-md border border-primary/50 bg-card/95 shadow-2xl w-[280px] sm:w-[320px]">
-        {/* Top Header Bar */}
-        <div className="flex items-center justify-between border-b border-border/70 bg-secondary/80 px-3 py-1.5 text-[11px]">
+    <div
+      style={{ left: `${boxPos.x}px`, top: `${boxPos.y}px` }}
+      className="fixed z-30 flex flex-col font-mono text-xs select-none touch-none"
+    >
+      <div className="panel pointer-events-auto overflow-hidden rounded-md border border-cyan-500/50 bg-card/95 shadow-2xl w-[290px] sm:w-[330px]">
+        {/* Draggable Top Header Bar */}
+        <div
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          className="flex items-center justify-between border-b border-border/70 bg-secondary/90 px-3 py-1.5 text-[11px] cursor-grab active:cursor-grabbing hover:bg-secondary transition-colors"
+          title="Drag this camera sensor window anywhere on screen"
+        >
           <div className="flex items-center gap-1.5 font-bold uppercase text-primary">
+            <GripHorizontal className="size-3.5 text-muted-foreground" />
             {cameraActive ? (
               <CheckCircle2 className="size-3.5 text-success animate-pulse" />
             ) : virtualCam ? (
@@ -614,14 +760,14 @@ export function MediaPipeController() {
             )}
             <span>
               {cameraActive
-                ? "LIVE WEBCAM VIEW"
+                ? "LIVE AI VISION"
                 : virtualCam
                   ? "VIRTUAL AI SENSOR"
-                  : "GESTURE SENSOR"}
+                  : "CAMERA GESTURES"}
             </span>
           </div>
 
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>
             <button
               onClick={() => setMinimized(!minimized)}
               className="rounded p-1 text-muted-foreground hover:text-foreground"
@@ -651,14 +797,39 @@ export function MediaPipeController() {
         </div>
 
         {/* Live Detected Gesture Feedback */}
-        <div className="border-b border-border/40 bg-black/60 px-3 py-1.5 text-[10px] font-bold text-accent truncate flex items-center gap-1.5">
-          <Sparkles className="size-3.5 text-warning animate-pulse shrink-0" />
-          <span className="truncate">{currentGestureBadge}</span>
+        <div className="border-b border-border/40 bg-black/70 px-3 py-1.5 text-[10px] font-bold text-accent truncate flex items-center justify-between gap-1.5">
+          <div className="flex items-center gap-1.5 truncate">
+            <Sparkles className="size-3.5 text-warning animate-pulse shrink-0" />
+            <span className="truncate">{currentGestureBadge}</span>
+          </div>
+          {blinkActive && (
+            <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 px-1 py-0.2 rounded text-[9px] font-mono animate-pulse">
+              BLINK!
+            </span>
+          )}
         </div>
 
-        {/* ALWAYS RENDER VIDEO AND CANVAS IN DOM (Hidden via CSS if minimized) */}
+        {/* Real-time Eye Recognition Status Meter with Sensitivity Toggle */}
+        <div className="border-b border-border/30 bg-black/50 px-3 py-1 text-[9.5px] text-muted-foreground flex items-center justify-between">
+          <span
+            className={cn(
+              "font-medium",
+              blinkActive ? "text-emerald-400 font-bold" : "text-slate-300",
+            )}
+          >
+            {eyeStatus}
+          </span>
+          <button
+            onClick={() => setHighSensitivity(!highSensitivity)}
+            className="text-[9px] text-cyan-400 font-semibold hover:underline"
+            title="Toggle eye sensitivity"
+          >
+            Sens: {highSensitivity ? "HIGH" : "STD"}
+          </button>
+        </div>
+
+        {/* Video & Landmark Canvas PIP */}
         <div className={cn("p-2 space-y-2", minimized && "hidden")}>
-          {/* Camera Error / Permission Notice */}
           {cameraError && (
             <div className="rounded border border-warning/40 bg-warning/10 p-2 text-[10px] text-warning flex items-start gap-1.5 leading-tight">
               <AlertCircle className="size-3.5 shrink-0 mt-0.5" />
@@ -676,7 +847,6 @@ export function MediaPipeController() {
             </div>
           )}
 
-          {/* Video & Landmark Canvas PIP - Video element is ALWAYS rendered in DOM */}
           <div className="relative aspect-[4/3] w-full overflow-hidden rounded border border-border bg-black">
             <video
               ref={videoRef}
@@ -690,22 +860,23 @@ export function MediaPipeController() {
             />
             <canvas ref={canvasRef} className="absolute inset-0 h-full w-full object-cover" />
 
-            {/* Overlays */}
             {cameraActive && (
-              <div className="absolute bottom-1 left-1 rounded bg-black/80 px-1.5 py-0.5 text-[9px] text-muted-foreground flex gap-2">
-                <span className="text-[#00e5ff] font-bold">● Hand</span>
-                <span className="text-[#ef4444] font-bold">● Eye Blink</span>
+              <div className="absolute bottom-1 left-1 rounded bg-black/85 px-1.5 py-0.5 text-[8.5px] text-muted-foreground flex gap-2">
+                <span className="text-[#c084fc] font-bold">● Left: 360°/Zoom</span>
+                <span className="text-[#00e5ff] font-bold">● Right: Point/Pinch</span>
+                <span className="text-[#22c55e] font-bold">● Eye Blink</span>
               </div>
             )}
 
             {!cameraActive && !virtualCam && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center p-3 text-center text-muted-foreground bg-black/90">
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-3 text-center text-muted-foreground bg-black/95">
                 <Camera className="size-7 text-primary mb-1 animate-pulse" />
                 <p className="text-[11px] font-bold text-foreground">
-                  Turn on Webcam to see your Face
+                  Turn on Webcam for AI Gestures
                 </p>
                 <p className="text-[9px] text-muted-foreground mt-0.5 leading-tight">
-                  Track pinch gestures & eye winks in real time
+                  👈 Left hand: 360° rotate & zoom · 👉 Right hand: point & pinch · 👁️ Eye blink:
+                  isolate
                 </p>
                 <div className="mt-2.5 flex gap-1.5">
                   <Button
@@ -719,154 +890,78 @@ export function MediaPipeController() {
                   <Button
                     size="sm"
                     variant="outline"
-                    className="h-6 text-[10px] gap-1 border-accent/60 text-accent hover:bg-accent/20"
+                    className="h-6 text-[10px] gap-1 border-primary/50 text-foreground"
                     onClick={() => {
                       setVirtualCam(true);
-                      showGesture("Virtual AI Cam active");
+                      showGesture("Virtual AI Sensor Enabled");
                     }}
                   >
-                    <MonitorPlay className="size-3" />
-                    <span>Virtual Cam</span>
+                    <MonitorPlay className="size-3 text-accent" />
+                    <span>Test Sensor</span>
                   </Button>
                 </div>
               </div>
             )}
           </div>
 
-          {/* Interactive Gesture Action Buttons */}
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-              <span className="font-bold text-foreground">ONE-CLICK GESTURES</span>
-              <span className="text-[9px] text-primary">Always Works</span>
-            </div>
-
+          {/* Quick Action Touch Buttons */}
+          <div className="space-y-1.5 pt-0.5">
             <div className="grid grid-cols-2 gap-1.5 text-[10px]">
               <button
-                className="flex items-center justify-center gap-1.5 rounded border border-primary/50 bg-secondary/80 py-1.5 hover:bg-primary/20 hover:border-primary transition-all text-foreground font-semibold shadow-sm col-span-2"
+                className="flex items-center justify-center gap-1.5 rounded border border-purple-500/50 bg-secondary/80 py-1.5 hover:bg-purple-500/20 hover:border-purple-400 transition-all text-foreground font-semibold shadow-sm"
                 onClick={() => {
-                  const s = useGame.getState();
-                  const infected = s.nodes.findIndex((n) => n.status === "infected");
-                  const nextId =
-                    infected >= 0 ? infected : ((s.selected ?? 0) + 1) % NETWORK.nodes.length;
-                  s.select(nextId);
-                  const node = NETWORK.nodes[nextId];
-                  if (node) {
-                    s.setPointingCrosshair({
-                      x: window.innerWidth * 0.5,
-                      y: window.innerHeight * 0.45,
-                      active: true,
-                      label: node.label,
-                    });
-                    showGesture(
-                      `👉 POINTING TARGET: ${node.label} (${node.sublabel}) · PINCH TO INVESTIGATE`,
-                    );
-                  }
+                  adjustOrbit(0.25, 0);
+                  showGesture("👈 LEFT HAND: Rotate 360° [45° Pan]");
                 }}
-                title="Point finger at a component to target it"
+                title="Left Hand moves left/right for 360° room rotation"
               >
-                <Hand className="size-3.5 text-primary rotate-45" />
-                <span>👉 Point Hand to Target</span>
+                <RotateCw className="size-3.5 text-purple-400" />
+                <span>👈 Left: 360° Rotate</span>
               </button>
 
               <button
-                className="flex items-center justify-center gap-1.5 rounded border border-primary/50 bg-secondary/80 py-1.5 hover:bg-primary/20 hover:border-primary transition-all text-foreground font-semibold shadow-sm"
+                className="flex items-center justify-center gap-1.5 rounded border border-purple-500/50 bg-secondary/80 py-1.5 hover:bg-purple-500/20 hover:border-purple-400 transition-all text-foreground font-semibold shadow-sm"
+                onClick={() => {
+                  adjustZoom(-2.5);
+                  showGesture("👈 LEFT HAND: Zoom In (Move Up)");
+                }}
+                title="Left Hand moves up to zoom in, down to zoom out"
+              >
+                <ZoomIn className="size-3.5 text-purple-400" />
+                <span>👈 Left: Zoom In/Out</span>
+              </button>
+
+              <button
+                className="flex items-center justify-center gap-1.5 rounded border border-cyan-500/50 bg-secondary/80 py-1.5 hover:bg-cyan-500/20 hover:border-cyan-400 transition-all text-foreground font-semibold shadow-sm"
                 onClick={() => {
                   const selected = useGame.getState().selected;
                   const ok = investigate(selected !== null ? selected : undefined);
                   if (ok) {
-                    showGesture("GESTURE: PINCH [OPENING INVESTIGATION DOSSIER]");
+                    showGesture("👉 RIGHT HAND PINCH [OPENING THREAT DOSSIER]");
                     sfx.gesture();
                   } else {
-                    showGesture("Point to an infected host or alert first, then Pinch!");
+                    showGesture("Aim at an infected host first, then Pinch!");
                   }
                 }}
-                title="Pinch thumb and index finger to investigate threat dossier"
+                title="Right Hand pinches thumb and index to scan malware dossier"
               >
-                <Hand className="size-3.5 text-accent" />
-                <span>✋ Pinch to Scan</span>
+                <Zap className="size-3.5 text-cyan-400" />
+                <span>👉 Right: Pinch Scan</span>
               </button>
 
               <button
-                className="flex items-center justify-center gap-1.5 rounded border border-destructive/50 bg-secondary/80 py-1.5 hover:bg-destructive/20 hover:border-destructive transition-all text-foreground font-semibold shadow-sm"
+                className="flex items-center justify-center gap-1.5 rounded border border-emerald-500/60 bg-secondary/80 py-1.5 hover:bg-emerald-500/20 hover:border-emerald-400 transition-all text-foreground font-semibold shadow-sm"
                 onClick={() => {
                   const selected = useGame.getState().selected;
                   isolate(selected !== null ? selected : undefined);
-                  showGesture("👁️ EYE BLINK DETECTED [QUARANTINE EXECUTED]");
+                  showGesture("👁️ EYE BLINK RECOGNIZED · THREAT QUARANTINED!");
                   sfx.blinkIsolate();
                 }}
-                title="Wink an eye to isolate and quarantine infected host"
+                title="Blink eye or wink to isolate and quarantine infected host"
               >
-                <Eye className="size-3.5 text-destructive" />
-                <span>👁️ Blink to Isolate</span>
+                <Eye className="size-3.5 text-emerald-400" />
+                <span>👁️ Blink: Quarantine</span>
               </button>
-
-              <button
-                className="flex items-center justify-center gap-1.5 rounded border border-accent/50 bg-secondary/80 py-1.5 hover:bg-accent/20 hover:border-accent transition-all text-foreground font-semibold shadow-sm"
-                onClick={() => {
-                  adjustZoom(-4);
-                  showGesture("GESTURE: PINCH → L [ZOOM IN]");
-                }}
-                title="Pinch to L gesture: Zooms in camera"
-              >
-                <ZoomIn className="size-3.5 text-accent" />
-                <span>Pinch → L (In)</span>
-              </button>
-
-              <button
-                className="flex items-center justify-center gap-1.5 rounded border border-accent/50 bg-secondary/80 py-1.5 hover:bg-accent/20 hover:border-accent transition-all text-foreground font-semibold shadow-sm"
-                onClick={() => {
-                  adjustZoom(4);
-                  showGesture("GESTURE: L → PINCH [ZOOM OUT]");
-                }}
-                title="L to Pinch gesture: Zooms out camera"
-              >
-                <ZoomOut className="size-3.5 text-accent" />
-                <span>L → Pinch (Out)</span>
-              </button>
-
-              <button
-                className="flex items-center justify-center gap-1.5 rounded border border-border bg-secondary/60 py-1.5 hover:bg-secondary transition-all text-muted-foreground hover:text-foreground"
-                onClick={() => {
-                  adjustOrbit(-0.35, 0);
-                  showGesture("FACE / HAND 360° PAN LEFT");
-                }}
-                title="Pan camera 360 degrees left"
-              >
-                <RotateCw className="size-3.5 -scale-x-100 text-primary" />
-                <span>360° Pan Left</span>
-              </button>
-
-              <button
-                className="flex items-center justify-center gap-1.5 rounded border border-border bg-secondary/60 py-1.5 hover:bg-secondary transition-all text-muted-foreground hover:text-foreground"
-                onClick={() => {
-                  adjustOrbit(0.35, 0);
-                  showGesture("FACE / HAND 360° PAN RIGHT");
-                }}
-                title="Pan camera 360 degrees right"
-              >
-                <RotateCw className="size-3.5 text-primary" />
-                <span>360° Pan Right</span>
-              </button>
-            </div>
-
-            {/* Mode Switcher */}
-            <div className="flex justify-between items-center pt-1 text-[9px] text-muted-foreground border-t border-border/40">
-              <span>
-                Status:{" "}
-                {cameraActive
-                  ? "Showing Live Face"
-                  : virtualCam
-                    ? "Virtual AI Active"
-                    : "Camera Ready"}
-              </span>
-              {!cameraActive && (
-                <button
-                  onClick={() => setVirtualCam(!virtualCam)}
-                  className="text-primary hover:underline font-semibold"
-                >
-                  {virtualCam ? "Disable Virtual Cam" : "Switch to Virtual Cam"}
-                </button>
-              )}
             </div>
           </div>
         </div>

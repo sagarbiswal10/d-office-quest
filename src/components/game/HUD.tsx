@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import gsap from "gsap";
 import {
   Bug,
   CirclePause,
@@ -12,6 +13,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Zap,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -32,6 +34,38 @@ function Bar({ label, value, tone }: { label: string; value: number; tone: strin
           className={cn("h-full transition-[width] duration-300", tone)}
           style={{ width: `${value}%` }}
         />
+      </div>
+    </div>
+  );
+}
+
+function GSAPCrosshair({ x, y, label }: { x: number; y: number; label: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (containerRef.current) {
+      gsap.to(containerRef.current, {
+        x,
+        y,
+        duration: 0.12,
+        ease: "power2.out",
+        overwrite: "auto",
+      });
+    }
+  }, [x, y]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="pointer-events-none fixed left-0 top-0 z-40 -translate-x-1/2 -translate-y-1/2"
+      style={{ transform: `translate3d(${x}px, ${y}px, 0)` }}
+    >
+      <div className="relative flex items-center justify-center">
+        <div className="size-11 rounded-full border-2 border-cyan-400 animate-spin border-t-transparent shadow-lg shadow-cyan-500/30" />
+        <div className="size-2 rounded-full bg-cyan-400 absolute animate-ping" />
+        <div className="absolute left-8 top-0.5 whitespace-nowrap rounded bg-black/90 border border-cyan-500/60 px-2 py-0.5 text-[10px] font-bold text-cyan-300 shadow-xl backdrop-blur-sm">
+          🎯 {label} (👈 LEFT PINCH TO SCAN)
+        </div>
       </div>
     </div>
   );
@@ -160,20 +194,18 @@ export function HUD() {
         </div>
 
         {/* Gesture Guidance Bar */}
-        <div className="mt-1.5 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-black/70 px-3 py-1 text-[10px] text-muted-foreground backdrop-blur-sm">
-          <span className="flex items-center gap-1 text-primary font-bold">
-            <Hand className="size-3" /> Point to Select
+        <div className="mt-1.5 inline-flex items-center gap-2 rounded-full border border-primary/30 bg-black/80 px-3.5 py-1 text-[10px] text-muted-foreground backdrop-blur-sm shadow-xl">
+          <span className="flex items-center gap-1 text-purple-400 font-bold">
+            <RotateCw className="size-3" /> 👈 Left: 360° Rotate & Zoom In/Out
           </span>
           <span className="text-border">·</span>
-          <span className="flex items-center gap-1 text-accent font-bold">
-            <Sparkles className="size-3" /> Pinch to Scan
+          <span className="flex items-center gap-1 text-cyan-400 font-bold">
+            <Hand className="size-3" /> 👉 Right: Point to Aim & Pinch to Scan
           </span>
           <span className="text-border">·</span>
-          <span className="flex items-center gap-1 text-success font-bold">
-            <Eye className="size-3" /> Eye Blink to Isolate
+          <span className="flex items-center gap-1 text-emerald-400 font-bold">
+            <Eye className="size-3" /> 👁️ Blink: Quarantine
           </span>
-          <span className="text-border">·</span>
-          <span className="text-foreground">Face/Hand 360° Pan</span>
         </div>
 
         {/* Eye Blink Isolation Alert Banner */}
@@ -185,23 +217,13 @@ export function HUD() {
         )}
       </div>
 
-      {/* Pointing Gesture Crosshair HUD Overlay */}
+      {/* GSAP-Smoothed Pointing Gesture Crosshair HUD Overlay */}
       {s.pointingCrosshair?.active && (
-        <div
-          className="pointer-events-none fixed z-40 -translate-x-1/2 -translate-y-1/2 transition-transform duration-75"
-          style={{
-            left: `${s.pointingCrosshair.x}px`,
-            top: `${s.pointingCrosshair.y}px`,
-          }}
-        >
-          <div className="relative flex items-center justify-center">
-            <div className="size-10 rounded-full border-2 border-primary/80 animate-spin border-t-transparent" />
-            <div className="size-2 rounded-full bg-primary absolute" />
-            <div className="absolute left-7 top-1 whitespace-nowrap rounded bg-black/90 border border-primary/60 px-2 py-0.5 text-[10px] font-bold text-primary shadow-lg">
-              🎯 TARGET: {s.pointingCrosshair.label} (PINCH TO INVESTIGATE)
-            </div>
-          </div>
-        </div>
+        <GSAPCrosshair
+          x={s.pointingCrosshair.x}
+          y={s.pointingCrosshair.y}
+          label={s.pointingCrosshair.label}
+        />
       )}
 
       {/* Bottom Row */}
@@ -281,7 +303,7 @@ export function HUD() {
               variant="default"
               className="h-12 flex-col gap-0.5 bg-destructive hover:bg-destructive/90 text-destructive-foreground shadow-md shadow-destructive/20"
               onClick={() => s.isolate()}
-              disabled={!selectedNode?.investigated}
+              disabled={!selectedNode || selectedNode.status !== "infected"}
               title="Isolate with Eye Wink / Blink or key X"
             >
               <LockKeyhole className="size-4" />
