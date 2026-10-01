@@ -1,0 +1,7 @@
+{
+  "name": "Cyber Raid — 3D SOC Defense",
+  "description": "3D cybersecurity incident-response game featuring interactive office environment, live SOC alerts, threat investigation, and webcam gesture controls.",
+  "requestFramePermissions": ["camera"],
+  "permissions": ["camera"],
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

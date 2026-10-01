@@ -15,16 +15,21 @@ export function setMuted(m: boolean) {
 function tone(freq: number, dur: number, type: OscillatorType = "sine", vol = 0.15, slide = 0) {
   const c = ac();
   if (!c || muted) return;
-  const o = c.createOscillator();
-  const g = c.createGain();
-  o.type = type;
-  o.frequency.setValueAtTime(freq, c.currentTime);
-  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, freq + slide), c.currentTime + dur);
-  g.gain.setValueAtTime(vol, c.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
-  o.connect(g).connect(c.destination);
-  o.start();
-  o.stop(c.currentTime + dur);
+  try {
+    const o = c.createOscillator();
+    const g = c.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, c.currentTime);
+    if (slide)
+      o.frequency.exponentialRampToValueAtTime(Math.max(20, freq + slide), c.currentTime + dur);
+    g.gain.setValueAtTime(vol, c.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime + dur);
+    o.connect(g).connect(c.destination);
+    o.start();
+    o.stop(c.currentTime + dur);
+  } catch {
+    // Audio context may be restricted before user interaction
+  }
 }
 
 export const sfx = {
@@ -41,6 +46,17 @@ export const sfx = {
   alert: () => tone(440, 0.3, "square", 0.06, -200),
   breach: () => tone(90, 0.5, "sawtooth", 0.15, -40),
   error: () => tone(160, 0.2, "square", 0.08),
-  start: () => [440, 660, 880].forEach((f, i) => setTimeout(() => tone(f, 0.15, "triangle", 0.1), i * 110)),
-  end: () => [880, 660, 440, 330].forEach((f, i) => setTimeout(() => tone(f, 0.2, "triangle", 0.1), i * 140)),
+  start: () =>
+    [440, 660, 880].forEach((f, i) => setTimeout(() => tone(f, 0.15, "triangle", 0.1), i * 110)),
+  end: () =>
+    [880, 660, 440, 330].forEach((f, i) =>
+      setTimeout(() => tone(f, 0.2, "triangle", 0.1), i * 140),
+    ),
+  gesture: () => tone(940, 0.06, "sine", 0.04),
+  zoomIn: () => tone(400, 0.12, "sine", 0.06, 300),
+  zoomOut: () => tone(700, 0.12, "sine", 0.06, -300),
+  blinkIsolate: () => {
+    tone(620, 0.1, "sine", 0.08);
+    setTimeout(() => tone(1040, 0.2, "triangle", 0.1, 200), 80);
+  },
 };

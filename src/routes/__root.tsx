@@ -78,11 +78,20 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Cyber Raid — 3D SOC Defense Game" },
-      { name: "description", content: "An interactive 3D cybersecurity incident-response game." },
+      { title: "Cyber Raid — 3D SOC Defense" },
+      {
+        name: "description",
+        content:
+          "3D cybersecurity incident-response game featuring interactive office environment, live SOC alerts, threat investigation, and webcam gesture controls.",
+      },
+      { property: "og:title", content: "Cyber Raid — 3D SOC Defense" },
+      {
+        property: "og:description",
+        content:
+          "3D cybersecurity incident-response game featuring interactive office environment, live SOC alerts, threat investigation, and webcam gesture controls.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@Lovable" },
     ],
     links: [
       {
@@ -90,7 +99,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         href: appCss,
       },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
-      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap",
+      },
       { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
     ],
   }),

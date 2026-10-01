@@ -54,6 +54,16 @@ function isErrorLike(value: unknown): value is Error {
 // recorded for consumeLastCapturedError and expanded before serialization.
 const originalConsoleError = console.error.bind(console);
 console.error = (...args: unknown[]) => {
+  const firstArg = typeof args[0] === "string" ? args[0] : "";
+  if (
+    firstArg.startsWith("INFO:") ||
+    firstArg.includes("XNNPACK delegate") ||
+    firstArg.includes("TensorFlow Lite")
+  ) {
+    console.info(...args);
+    return;
+  }
+
   const expanded = args.map((arg) => {
     if (!isErrorLike(arg)) return arg;
     record(arg);
@@ -63,10 +73,28 @@ console.error = (...args: unknown[]) => {
 };
 
 if (typeof globalThis.addEventListener === "function") {
-  globalThis.addEventListener("error", (event) => record((event as ErrorEvent).error ?? event));
-  globalThis.addEventListener("unhandledrejection", (event) =>
-    record((event as PromiseRejectionEvent).reason),
-  );
+  globalThis.addEventListener("error", (event) => {
+    const msg = (event as ErrorEvent).message || "";
+    if (
+      msg.includes("INFO:") ||
+      msg.includes("XNNPACK delegate") ||
+      msg.includes("TensorFlow Lite")
+    ) {
+      return;
+    }
+    record((event as ErrorEvent).error ?? event);
+  });
+  globalThis.addEventListener("unhandledrejection", (event) => {
+    const reason = String((event as PromiseRejectionEvent).reason || "");
+    if (
+      reason.includes("INFO:") ||
+      reason.includes("XNNPACK delegate") ||
+      reason.includes("TensorFlow Lite")
+    ) {
+      return;
+    }
+    record((event as PromiseRejectionEvent).reason);
+  });
 }
 
 export function consumeLastCapturedError(): unknown {
