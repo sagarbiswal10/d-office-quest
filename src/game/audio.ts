@@ -59,4 +59,8 @@ export const sfx = {
     tone(620, 0.1, "sine", 0.08);
     setTimeout(() => tone(1040, 0.2, "triangle", 0.1, 200), 80);
   },
+  threatIdentified: () => {
+    tone(580, 0.12, "sine", 0.09, 200);
+    setTimeout(() => tone(1160, 0.2, "triangle", 0.12, 300), 90);
+  },
 };

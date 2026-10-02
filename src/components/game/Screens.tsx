@@ -13,6 +13,7 @@ import {
   Volume2,
   VolumeX,
   ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { RANKS, TOTAL_THREATS, rankFor } from "@/game/data";
 import { loadLeaderboard, saveScore, useGame, type LeaderEntry } from "@/game/store";
@@ -77,8 +78,8 @@ export function Menu() {
           <p className="mt-3 max-w-xl text-sm leading-6 text-muted-foreground">
             Defend an enterprise 3D Security Operations Center from live cyber warfare attacks. Use
             cutting-edge <strong className="text-foreground">MediaPipe AI Camera Gestures</strong>{" "}
-            or keyboard/mouse to investigate malware, review forensic dossiers, and quarantine
-            compromised hosts with a wink.
+            or keyboard/mouse to point, investigate malware with an intentional pinch, zoom with
+            left-hand pinch, and quarantine compromised hosts with a "2" (V-sign).
           </p>
 
           <label className="mt-5 block text-[10px] uppercase text-muted-foreground font-semibold">
@@ -96,23 +97,23 @@ export function Menu() {
           <div className="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <Step
               icon={<Hand className="size-4" />}
-              title="Pinch (Scan)"
-              text="Pinch thumb & index to investigate threat dossier"
+              title="Point & Pinch"
+              text="Point at infected device to select, pinch to launch SOC threat analyzer"
             />
             <Step
-              icon={<Eye className="size-4" />}
-              title="Eye Wink"
-              text="Wink or blink to isolate & quarantine compromised host"
+              icon={<ShieldCheck className="size-4" />}
+              title="Right 'V' Sign"
+              text="Show 'V' sign with right hand to isolate host after threat is verified"
             />
             <Step
               icon={<ZoomIn className="size-4" />}
-              title="Pinch ↔ L"
-              text="Pinch to L zooms in; L to Pinch zooms out"
+              title="Left 'V' Zoom In"
+              text="Show 'V' sign with left hand to smoothly zoom in closer"
             />
             <Step
-              icon={<Camera className="size-4" />}
-              title="360° View"
-              text="Tilt head or move hand to pan around the 3D office"
+              icon={<ZoomOut className="size-4" />}
+              title="Left 'W' Zoom Out"
+              text="Show 'W' sign with left hand to smoothly zoom out farther"
             />
           </div>
 
@@ -120,9 +121,10 @@ export function Menu() {
             <Button
               size="lg"
               onClick={start}
-              className="font-display uppercase text-sm font-bold tracking-wide"
+              className="font-display uppercase text-sm font-bold tracking-wide gap-2 bg-primary text-primary-foreground hover:bg-primary/90"
             >
-              Begin SOC Shift
+              <Camera className="size-4" />
+              <span>Start Mission</span>
             </Button>
             <Button
               variant="ghost"
@@ -138,7 +140,7 @@ export function Menu() {
               {muted ? <VolumeX /> : <Volume2 />}
             </Button>
             <span className="text-[11px] text-muted-foreground">
-              Webcam supported · On-screen gesture simulator & keyboard always available.
+              Webcam auto-activates on start · Real-time 3D SOC defense.
             </span>
           </div>
         </section>
@@ -146,13 +148,25 @@ export function Menu() {
         <aside className="space-y-4">
           <div className="panel p-4 text-xs leading-6 text-muted-foreground">
             <div className="mb-2 font-display text-sm uppercase text-primary font-bold">
-              Shift Directives
+              SOC Mission Directives
             </div>
-            <p>1. Threats manifest across workstations, SAN storage, and core database racks.</p>
-            <p>2. Pinching an infected machine launches the forensic investigation dossier.</p>
-            <p>3. Winking an eye biometrically isolates the host, terminating the attack spread.</p>
             <p>
-              4. Neutralize all {TOTAL_THREATS} cyber incidents to secure the enterprise network.
+              1. Starts at 0/5 with 1 Server, 1 PC, and 1 Router with healthy green data traffic.
+            </p>
+            <p>
+              2. When attack strikes, dashboard flashes red. Point at the infected host to select
+              it.
+            </p>
+            <p>
+              3. Pinch while pointing to launch the SOC Threat Analyzer. Isolate unlocks at 100%.
+            </p>
+            <p>
+              4. Right-hand 'V' isolates the threat. Network immediately returns to normal green
+              flow.
+            </p>
+            <p>
+              5. Network expands from 0/5 → 5/5 with new PCs, Servers, and Routers after each
+              incident.
             </p>
           </div>
           <Leaderboard entries={leaderboard} />

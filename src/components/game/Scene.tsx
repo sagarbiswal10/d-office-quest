@@ -1,8 +1,8 @@
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Line, OrbitControls, RoundedBox, Text } from "@react-three/drei";
 import { useRef } from "react";
 import * as THREE from "three";
-import { NETWORK, THREATS } from "@/game/data";
+import { NETWORK, THREATS, getActiveLinks, getActiveNodeIds } from "@/game/data";
 import { useGame, type NodeState } from "@/game/store";
 
 const OFFICE_PALETTE = {
@@ -35,6 +35,25 @@ function statusColor(node: NodeState) {
 
 function MissionLoop() {
   useFrame((_, rawDelta) => useGame.getState().tick(Math.min(rawDelta, 0.05)));
+  return null;
+}
+
+function ScreenProjector() {
+  const { camera, size } = useThree();
+  useFrame(() => {
+    const coords: Record<number, { x: number; y: number }> = {};
+    const v = new THREE.Vector3();
+    NETWORK.nodes.forEach((node) => {
+      v.set(node.pos[0], node.pos[1] + (node.kind === "server" ? 2.2 : 1.2), node.pos[2]);
+      v.project(camera);
+      if (v.z < 1) {
+        const x = ((v.x + 1) * size.width) / 2;
+        const y = ((-v.y + 1) * size.height) / 2;
+        coords[node.id] = { x, y };
+      }
+    });
+    useGame.getState().setNodeScreenCoords(coords);
+  });
   return null;
 }
 
@@ -149,7 +168,7 @@ function CyberTeamWorkstation({ accent = OFFICE_PALETTE.screenClean }: { accent?
           </mesh>
           <mesh position={[0, 0, 0.022]}>
             <planeGeometry args={[0.54, 0.9]} />
-            <meshBasicMaterial color="#0284c7" toneMapped={false} />
+            <meshBasicMaterial color={accent} toneMapped={false} />
           </mesh>
         </group>
       </group>
@@ -491,8 +510,8 @@ function CyberTeamOfficeArchitecture() {
             : "CYBER TEAM · GLOBAL SOC PERIMETER SECURE"}
         </Text>
         <Text position={[0, 1.1, 0.1]} fontSize={0.28} color="#ffffff" anchorX="center">
-          👈 Left: 360° Rotate & Zoom In/Out · 👉 Right: Point to Aim & Pinch to Scan · 👁️ Blink to
-          Isolate
+          👈 Left: Pinch Zoom & 360° Rotate · 👉 Right: Point to Aim, Pinch to Investigate · ✌️ "2"
+          (V-Sign) to Isolate
         </Text>
 
         {/* Side Screen: Datacenter Server Telemetry */}
@@ -528,6 +547,455 @@ function CyberTeamOfficeArchitecture() {
 }
 
 // -------------------------------------------------------------------------
+// -------------------------------------------------------------------------
+// UNIFIED BOTTOM-CORNER CYBER LOUNGE & TV BREAKOUT SUITE
+// Placed in the bottom-right corner square: 85" OLED TV, Sofas, Coffee Table,
+// Armchairs, Plush Rug, Modern Arc Lamp, and Planters all unified together
+// -------------------------------------------------------------------------
+function CyberCornerLoungeWithTV() {
+  const activeAlerts = useGame((s) => s.nodes.filter((n) => n.status === "infected").length);
+  const tvTickerRef = useRef<THREE.Group>(null);
+
+  useFrame(({ clock }) => {
+    if (tvTickerRef.current) {
+      tvTickerRef.current.position.y = 2.1 + Math.sin(clock.elapsedTime * 2) * 0.012;
+    }
+  });
+
+  return (
+    <group position={[17.0, 0, 15.0]} rotation-y={-Math.PI / 4}>
+      {/* 1. Plush Acoustic Area Rug with Neon Cyan Border */}
+      <mesh rotation-x={-Math.PI / 2} position={[0, 0.012, 2.6]} receiveShadow>
+        <planeGeometry args={[9.8, 8.2]} />
+        <meshStandardMaterial color="#1e293b" roughness={0.9} />
+      </mesh>
+      {/* Decorative Cyan Floor Accent Ring */}
+      <mesh rotation-x={-Math.PI / 2} position={[0, 0.015, 2.6]}>
+        <ringGeometry args={[4.4, 4.54, 32]} />
+        <meshBasicMaterial color="#38bdf8" transparent opacity={0.65} />
+      </mesh>
+
+      {/* 2. 85" OLED TV & MEDIA CREDENZA (Facing inward toward the sofa) */}
+      <group position={[0, 0, 0]}>
+        {/* Sleek Timber & Charcoal Media Credenza / Stand */}
+        <RoundedBox
+          args={[4.4, 0.65, 0.9]}
+          radius={0.05}
+          smoothness={2}
+          position={[0, 0.34, 0]}
+          castShadow
+          receiveShadow
+        >
+          <meshStandardMaterial color="#0f172a" roughness={0.4} />
+        </RoundedBox>
+        {/* Front Wood Slatted Cabinet Inset */}
+        <mesh position={[0, 0.34, 0.455]}>
+          <planeGeometry args={[4.1, 0.52]} />
+          <meshStandardMaterial color={OFFICE_PALETTE.acousticTimber} roughness={0.4} />
+        </mesh>
+        {/* Media Stand Legs */}
+        {[-1.9, 1.9].map((x) =>
+          [-0.32, 0.32].map((z) => (
+            <mesh key={`credenza-leg-${x}-${z}`} position={[x, 0.04, z]} castShadow>
+              <cylinderGeometry args={[0.03, 0.03, 0.08, 8]} />
+              <meshStandardMaterial color="#475569" metalness={0.9} />
+            </mesh>
+          )),
+        )}
+
+        {/* Slim TV Metal Pedestal Mount */}
+        <mesh position={[0, 0.85, 0]} castShadow>
+          <cylinderGeometry args={[0.05, 0.05, 0.45, 10]} />
+          <meshStandardMaterial color="#0f172a" metalness={0.9} roughness={0.2} />
+        </mesh>
+        <mesh position={[0, 0.68, 0]} castShadow>
+          <boxGeometry args={[1.2, 0.03, 0.5]} />
+          <meshStandardMaterial color="#0f172a" metalness={0.9} roughness={0.2} />
+        </mesh>
+
+        {/* 85" OLED TV Bezel & Screen Frame */}
+        <group position={[0, 2.1, 0]} ref={tvTickerRef}>
+          <RoundedBox
+            args={[3.8, 2.2, 0.08]}
+            radius={0.04}
+            smoothness={2}
+            position={[0, 0, 0]}
+            castShadow
+          >
+            <meshStandardMaterial color="#020617" roughness={0.2} metalness={0.9} />
+          </RoundedBox>
+
+          {/* OLED TV Screen Display (Facing inward) */}
+          <mesh position={[0, 0, 0.045]}>
+            <planeGeometry args={[3.68, 2.08]} />
+            <meshStandardMaterial
+              color={activeAlerts > 0 ? "#1c0b0b" : "#021c29"}
+              emissive={activeAlerts > 0 ? "#dc2626" : "#0284c7"}
+              emissiveIntensity={activeAlerts > 0 ? 0.75 : 0.45}
+              roughness={0.15}
+            />
+          </mesh>
+
+          {/* TV Screen Graphics: Live SOC Broadcast & News Ticker */}
+          <group position={[0, 0, 0.05]}>
+            <Text
+              position={[0, 0.75, 0]}
+              fontSize={0.16}
+              color="#38bdf8"
+              anchorX="center"
+              fontStyle="bold"
+            >
+              ● LIVE CYBER OPS BREAKOUT BROADCAST
+            </Text>
+            <Text
+              position={[0, 0.42, 0]}
+              fontSize={0.22}
+              color={activeAlerts > 0 ? "#ef4444" : "#22c55e"}
+              anchorX="center"
+            >
+              {activeAlerts > 0
+                ? "⚠️ SEVERE THREAT LEVEL: ELEVATED"
+                : "STATUS: THREAT INDEX NOMINAL"}
+            </Text>
+            <Text position={[0, 0.1, 0]} fontSize={0.12} color="#94a3b8" anchorX="center">
+              ACTIVE SUBNETS: 10.20.10.0/24 · ZERO-DAY DEFENSE ACTIVE
+            </Text>
+            {/* Visual Simulated Cyber Graph on TV */}
+            <mesh position={[0, -0.32, 0]}>
+              <planeGeometry args={[3.2, 0.5]} />
+              <meshBasicMaterial color="#072338" />
+            </mesh>
+            <Text position={[0, -0.32, 0.01]} fontSize={0.11} color="#00e5ff" anchorX="center">
+              GLOBAL SOC TELEMETRY: 24/7 NETWORK TRAFFIC ENCRYPTED
+            </Text>
+            {/* Bottom News Ticker Bar */}
+            <mesh position={[0, -0.84, 0]}>
+              <planeGeometry args={[3.6, 0.28]} />
+              <meshBasicMaterial color={activeAlerts > 0 ? "#991b1b" : "#0369a1"} />
+            </mesh>
+            <Text position={[0, -0.84, 0.01]} fontSize={0.11} color="#ffffff" anchorX="center">
+              LEFT 'V': ZOOM IN · LEFT 'W': ZOOM OUT · RIGHT 'V': ISOLATE · PINCH: INVESTIGATE
+            </Text>
+          </group>
+
+          {/* Sleek Soundbar mounted below TV screen */}
+          <RoundedBox
+            args={[3.2, 0.12, 0.12]}
+            radius={0.02}
+            smoothness={2}
+            position={[0, -1.2, 0.03]}
+            castShadow
+          >
+            <meshStandardMaterial color="#0f172a" roughness={0.3} metalness={0.8} />
+          </RoundedBox>
+        </group>
+      </group>
+
+      {/* 3. MODERN DESIGNER LOW COFFEE TABLE (Between Sofa and TV) */}
+      <group position={[0, 0, 2.4]}>
+        {/* Warm Oak Tabletop with Beveled Rounded Edges */}
+        <RoundedBox
+          args={[2.8, 0.08, 1.4]}
+          radius={0.04}
+          smoothness={2}
+          position={[0, 0.44, 0]}
+          castShadow
+          receiveShadow
+        >
+          <meshStandardMaterial color={OFFICE_PALETTE.deskWood} roughness={0.35} />
+        </RoundedBox>
+        {/* Hairpin Metal Legs */}
+        {[-1.2, 1.2].map((x) =>
+          [-0.5, 0.5].map((z) => (
+            <mesh key={`leg-table-${x}-${z}`} position={[x, 0.22, z]} castShadow>
+              <cylinderGeometry args={[0.025, 0.025, 0.42, 8]} />
+              <meshStandardMaterial color="#334155" metalness={0.8} roughness={0.25} />
+            </mesh>
+          )),
+        )}
+
+        {/* Coffee Table Props: Cyber Tablet, Ceramic Mugs */}
+        <group position={[-0.45, 0.49, -0.15]} rotation-y={0.2}>
+          <mesh castShadow>
+            <boxGeometry args={[0.32, 0.015, 0.44]} />
+            <meshStandardMaterial color="#0f172a" metalness={0.8} roughness={0.2} />
+          </mesh>
+          <mesh position={[0, 0.01, 0]}>
+            <planeGeometry args={[0.28, 0.38]} />
+            <meshBasicMaterial color="#0284c7" />
+          </mesh>
+        </group>
+        <group position={[0.55, 0.52, 0.2]}>
+          <mesh castShadow>
+            <cylinderGeometry args={[0.055, 0.045, 0.11, 10]} />
+            <meshStandardMaterial color="#f8fafc" roughness={0.3} />
+          </mesh>
+          <mesh position={[0, 0.05, 0]}>
+            <cylinderGeometry args={[0.046, 0.046, 0.02, 10]} />
+            <meshStandardMaterial color="#78350f" roughness={0.8} />
+          </mesh>
+        </group>
+        <group position={[0.75, 0.52, 0.05]}>
+          <mesh castShadow>
+            <cylinderGeometry args={[0.055, 0.045, 0.11, 10]} />
+            <meshStandardMaterial color="#0284c7" roughness={0.3} />
+          </mesh>
+        </group>
+      </group>
+
+      {/* 4. EXECUTIVE 3-SEATER MODERN SECTIONAL SOFA (Facing directly at the TV) */}
+      <group position={[0, 0, 4.8]} rotation-y={Math.PI}>
+        {/* Main Sofa Base */}
+        <RoundedBox
+          args={[4.8, 0.42, 1.5]}
+          radius={0.08}
+          smoothness={2}
+          position={[0, 0.32, 0]}
+          castShadow
+          receiveShadow
+        >
+          <meshStandardMaterial color="#0f172a" roughness={0.7} />
+        </RoundedBox>
+
+        {/* 3 Plush Seat Cushions */}
+        {[-1.5, 0, 1.5].map((x, i) => (
+          <RoundedBox
+            key={i}
+            args={[1.42, 0.22, 1.3]}
+            radius={0.06}
+            smoothness={2}
+            position={[x, 0.58, 0.05]}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial color="#1e293b" roughness={0.6} />
+          </RoundedBox>
+        ))}
+
+        {/* Ergonomic Sofa Backrest */}
+        <RoundedBox
+          args={[4.8, 0.85, 0.42]}
+          radius={0.08}
+          smoothness={2}
+          position={[0, 0.95, 0.65]}
+          castShadow
+          receiveShadow
+        >
+          <meshStandardMaterial color="#1e293b" roughness={0.65} />
+        </RoundedBox>
+        {/* 3 Backrest Pillows */}
+        {[-1.5, 0, 1.5].map((x, i) => (
+          <RoundedBox
+            key={`back-${i}`}
+            args={[1.38, 0.6, 0.22]}
+            radius={0.06}
+            smoothness={2}
+            position={[x, 0.98, 0.52]}
+            rotation-x={-0.08}
+            castShadow
+          >
+            <meshStandardMaterial color="#334155" roughness={0.6} />
+          </RoundedBox>
+        ))}
+
+        {/* Left and Right Armrests */}
+        {[-2.52, 2.52].map((x, i) => (
+          <RoundedBox
+            key={`arm-${i}`}
+            args={[0.36, 0.62, 1.6]}
+            radius={0.06}
+            smoothness={2}
+            position={[x, 0.68, 0]}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial color="#0f172a" roughness={0.7} />
+          </RoundedBox>
+        ))}
+
+        {/* Accent Cyber Throw Pillows (Gold and Cyan) */}
+        <RoundedBox
+          args={[0.42, 0.42, 0.16]}
+          radius={0.04}
+          smoothness={2}
+          position={[-2.1, 0.72, 0.35]}
+          rotation-y={0.3}
+          rotation-z={0.15}
+          castShadow
+        >
+          <meshStandardMaterial color="#38bdf8" roughness={0.4} />
+        </RoundedBox>
+        <RoundedBox
+          args={[0.42, 0.42, 0.16]}
+          radius={0.04}
+          smoothness={2}
+          position={[2.1, 0.72, 0.35]}
+          rotation-y={-0.3}
+          rotation-z={-0.15}
+          castShadow
+        >
+          <meshStandardMaterial color="#f59e0b" roughness={0.4} />
+        </RoundedBox>
+
+        {/* Matte Black Sofa Legs */}
+        {[-2.2, 2.2].map((x) =>
+          [-0.6, 0.6].map((z) => (
+            <mesh key={`leg-${x}-${z}`} position={[x, 0.06, z]} castShadow>
+              <cylinderGeometry args={[0.035, 0.025, 0.14, 8]} />
+              <meshStandardMaterial color="#475569" metalness={0.8} roughness={0.3} />
+            </mesh>
+          )),
+        )}
+      </group>
+
+      {/* 5. MATCHING SIDE ARMCHAIR (Left Flank, Angled toward Coffee Table & TV) */}
+      <group position={[-2.9, 0, 2.6]} rotation-y={Math.PI / 3}>
+        <RoundedBox
+          args={[1.65, 0.38, 1.5]}
+          radius={0.06}
+          smoothness={2}
+          position={[0, 0.3, 0]}
+          castShadow
+          receiveShadow
+        >
+          <meshStandardMaterial color="#0f172a" roughness={0.7} />
+        </RoundedBox>
+        <RoundedBox
+          args={[1.5, 0.2, 1.3]}
+          radius={0.05}
+          smoothness={2}
+          position={[0, 0.54, 0.05]}
+          castShadow
+          receiveShadow
+        >
+          <meshStandardMaterial color="#1e293b" roughness={0.6} />
+        </RoundedBox>
+        <RoundedBox
+          args={[1.65, 0.8, 0.36]}
+          radius={0.06}
+          smoothness={2}
+          position={[0, 0.9, 0.6]}
+          castShadow
+          receiveShadow
+        >
+          <meshStandardMaterial color="#1e293b" roughness={0.65} />
+        </RoundedBox>
+        {[-0.88, 0.88].map((x, i) => (
+          <RoundedBox
+            key={`chair-arm-l-${i}`}
+            args={[0.24, 0.58, 1.5]}
+            radius={0.05}
+            smoothness={2}
+            position={[x, 0.64, 0]}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial color="#0f172a" roughness={0.7} />
+          </RoundedBox>
+        ))}
+      </group>
+
+      {/* 6. MATCHING SIDE ARMCHAIR (Right Flank, Angled toward Coffee Table & TV) */}
+      <group position={[2.9, 0, 2.6]} rotation-y={-Math.PI / 3}>
+        <RoundedBox
+          args={[1.65, 0.38, 1.5]}
+          radius={0.06}
+          smoothness={2}
+          position={[0, 0.3, 0]}
+          castShadow
+          receiveShadow
+        >
+          <meshStandardMaterial color="#0f172a" roughness={0.7} />
+        </RoundedBox>
+        <RoundedBox
+          args={[1.5, 0.2, 1.3]}
+          radius={0.05}
+          smoothness={2}
+          position={[0, 0.54, 0.05]}
+          castShadow
+          receiveShadow
+        >
+          <meshStandardMaterial color="#1e293b" roughness={0.6} />
+        </RoundedBox>
+        <RoundedBox
+          args={[1.65, 0.8, 0.36]}
+          radius={0.06}
+          smoothness={2}
+          position={[0, 0.9, 0.6]}
+          castShadow
+          receiveShadow
+        >
+          <meshStandardMaterial color="#1e293b" roughness={0.65} />
+        </RoundedBox>
+        {[-0.88, 0.88].map((x, i) => (
+          <RoundedBox
+            key={`chair-arm-r-${i}`}
+            args={[0.24, 0.58, 1.5]}
+            radius={0.05}
+            smoothness={2}
+            position={[x, 0.64, 0]}
+            castShadow
+            receiveShadow
+          >
+            <meshStandardMaterial color="#0f172a" roughness={0.7} />
+          </RoundedBox>
+        ))}
+      </group>
+
+      {/* 7. MODERN ARC DESIGNER FLOOR LAMP (Flanking the corner sofa) */}
+      <group position={[-3.8, 0, 4.6]}>
+        <mesh position={[0, 0.04, 0]} castShadow>
+          <cylinderGeometry args={[0.35, 0.38, 0.08, 16]} />
+          <meshStandardMaterial color="#0f172a" roughness={0.3} metalness={0.9} />
+        </mesh>
+        <mesh position={[0, 1.8, 0]} castShadow>
+          <cylinderGeometry args={[0.025, 0.025, 3.6, 8]} />
+          <meshStandardMaterial color="#cbd5e1" metalness={0.9} roughness={0.2} />
+        </mesh>
+        <mesh position={[0.45, 3.65, 0]} rotation-z={-0.6} castShadow>
+          <cylinderGeometry args={[0.025, 0.025, 1.2, 8]} />
+          <meshStandardMaterial color="#cbd5e1" metalness={0.9} roughness={0.2} />
+        </mesh>
+        <group position={[0.9, 3.4, 0]}>
+          <mesh castShadow>
+            <sphereGeometry args={[0.26, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
+            <meshStandardMaterial
+              color="#0f172a"
+              metalness={0.8}
+              roughness={0.2}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+          <mesh position={[0, -0.05, 0]}>
+            <sphereGeometry args={[0.08, 8, 8]} />
+            <meshBasicMaterial color="#fef08a" />
+          </mesh>
+          <pointLight color="#fef08a" intensity={4} distance={6} decay={2} />
+        </group>
+      </group>
+
+      {/* 8. LUSH TROPICAL PLANTERS FLANKING THE TV CONSOLE */}
+      {[-2.9, 2.9].map((x, i) => (
+        <group key={`lounge-plant-${i}`} position={[x, 0, 0.2]}>
+          <mesh position={[0, 0.42, 0]} castShadow receiveShadow>
+            <cylinderGeometry args={[0.36, 0.28, 0.84, 16]} />
+            <meshStandardMaterial color="#1e293b" roughness={0.5} />
+          </mesh>
+          <mesh position={[0, 1.15, 0]} castShadow>
+            <sphereGeometry args={[0.5, 8, 8]} />
+            <meshStandardMaterial color="#166534" roughness={0.4} />
+          </mesh>
+          <mesh position={[0, 1.65, 0]} castShadow>
+            <sphereGeometry args={[0.36, 8, 8]} />
+            <meshStandardMaterial color="#22c55e" roughness={0.35} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+// -------------------------------------------------------------------------
 // INTERACTIVE NETWORK DEVICE COMPONENT (Desks, Servers, Routers)
 // -------------------------------------------------------------------------
 function InteractiveDevice({ index }: { index: number }) {
@@ -535,12 +1003,18 @@ function InteractiveDevice({ index }: { index: number }) {
   const node = useGame((s) => s.nodes[index]);
   const selected = useGame((s) => s.selected === index);
   const phase = useGame((s) => s.phase);
+  const missionProgress = useGame((s) => s.missionProgress);
+  const activeNodeIds = getActiveNodeIds(missionProgress);
+  const isActive = activeNodeIds.includes(index);
 
   const group = useRef<THREE.Group>(null);
   const ring = useRef<THREE.Mesh>(null);
   const threatHolo = useRef<THREE.Group>(null);
 
-  const color = node ? statusColor(node) : OFFICE_PALETTE.screenClean;
+  // Active nodes use dynamic status color (healthy green #10b981 or threat red); standby nodes use calm slate
+  const color = !isActive ? "#475569" : node ? statusColor(node) : OFFICE_PALETTE.screenClean;
+  // When pointed at / selected, entire component glows in vibrant bright yellow (#facc15)
+  const componentColor = selected ? "#facc15" : color;
 
   useFrame(({ clock }) => {
     const time = clock.elapsedTime;
@@ -569,38 +1043,49 @@ function InteractiveDevice({ index }: { index: number }) {
       position={def.pos}
       ref={group}
       onClick={(e) => {
-        if (phase !== "playing") return;
+        if (phase !== "playing" || !isActive) return;
         e.stopPropagation();
         useGame.getState().select(index);
       }}
       onPointerOver={() => {
-        document.body.style.cursor = "pointer";
+        if (isActive) document.body.style.cursor = "pointer";
       }}
       onPointerOut={() => {
         document.body.style.cursor = "";
       }}
     >
       {def.kind === "server" ? (
-        <CyberTeamServerCabinet accent={color} />
+        <CyberTeamServerCabinet accent={componentColor} />
       ) : def.kind === "router" ? (
-        <CyberTeamRouterConsole accent={color} />
+        <CyberTeamRouterConsole accent={componentColor} />
       ) : (
-        <CyberTeamWorkstation accent={color} />
+        <CyberTeamWorkstation accent={componentColor} />
       )}
 
-      {/* Target Selection Floor Ring */}
+      {/* Target Selection / Network Status Floor Ring */}
       <mesh ref={ring} rotation-x={-Math.PI / 2} position={[0, 0.04, 0]}>
-        <ringGeometry args={[1.3, 1.52, 36]} />
+        <ringGeometry args={[1.3, 1.58, 36]} />
         <meshBasicMaterial
-          color={selected ? OFFICE_PALETTE.selectedGold : color}
+          color={selected ? "#facc15" : color}
           transparent
-          opacity={selected ? 0.95 : 0.45}
+          opacity={selected ? 1 : isActive ? 0.5 : 0.12}
           toneMapped={false}
         />
       </mesh>
 
+      {/* Selected Component Yellow Illumination Spotlight */}
+      {selected && (
+        <pointLight
+          position={[0, def.kind === "server" ? 2.6 : 1.6, 0]}
+          color="#facc15"
+          intensity={16}
+          distance={5.8}
+          decay={2}
+        />
+      )}
+
       {/* Floating Threat Indicator */}
-      {node.status === "infected" && (
+      {isActive && node.status === "infected" && (
         <group position={[0, def.kind === "server" ? 4.3 : 2.9, 0]} ref={threatHolo}>
           <mesh>
             <octahedronGeometry args={[0.38 + node.infection * 0.25, 0]} />
@@ -617,16 +1102,17 @@ function InteractiveDevice({ index }: { index: number }) {
       <Text
         position={[0, def.kind === "server" ? 4.1 : 2.6, 0]}
         fontSize={0.36}
-        color={selected ? OFFICE_PALETTE.selectedGold : "#ffffff"}
+        color={selected ? OFFICE_PALETTE.selectedGold : isActive ? "#ffffff" : "#94a3b8"}
         anchorX="center"
         outlineWidth={0.03}
         outlineColor="#0f172a"
+        fillOpacity={isActive ? 1 : 0.45}
       >
         {def.label}
-        {node.status === "infected" && node.investigated && node.threat
-          ? `\n[ ${THREATS[node.threat].name} ]`
-          : node.status === "infected"
-            ? "\n[ THREAT DETECTED · PINCH ]"
+        {isActive && node.status === "infected" && node.threat
+          ? `\n[ 🚨 ${THREATS[node.threat].name} ]`
+          : !isActive
+            ? "\n[ STANDBY ]"
             : ""}
       </Text>
     </group>
@@ -691,6 +1177,56 @@ function CyberNetworkLink({ a, b }: { a: number; b: number }) {
 }
 
 // -------------------------------------------------------------------------
+// 3D EMERGENCY ZERO-TRUST FIREWALL SHIELD DOME
+// Activates when firewallFor > 0 to visually protect all enterprise devices
+// -------------------------------------------------------------------------
+function CyberZeroTrustFirewallShield() {
+  const firewallFor = useGame((s) => s.firewallFor);
+  const domeRef = useRef<THREE.Mesh>(null);
+  const ringRef = useRef<THREE.Mesh>(null);
+
+  useFrame(({ clock }) => {
+    const t = clock.elapsedTime;
+    if (domeRef.current) {
+      domeRef.current.rotation.y = t * 0.35;
+    }
+    if (ringRef.current) {
+      ringRef.current.rotation.z = -t * 0.5;
+    }
+  });
+
+  if (firewallFor <= 0) return null;
+
+  return (
+    <group position={[0, 0, 0]}>
+      {/* Geodesic Hexagonal Cyber Shield Dome */}
+      <mesh ref={domeRef} position={[0, 1.2, 0]}>
+        <sphereGeometry args={[26, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <meshStandardMaterial
+          color="#00e5ff"
+          emissive="#0284c7"
+          emissiveIntensity={1.4}
+          wireframe
+          transparent
+          opacity={0.32}
+          side={THREE.DoubleSide}
+          toneMapped={false}
+        />
+      </mesh>
+
+      {/* Pulsing Floor Perimeter Grid Ring */}
+      <mesh ref={ringRef} rotation-x={-Math.PI / 2} position={[0, 0.05, 0]}>
+        <ringGeometry args={[25.2, 25.8, 48]} />
+        <meshBasicMaterial color="#00e5ff" transparent opacity={0.85} toneMapped={false} />
+      </mesh>
+
+      {/* Cyber Blue Volumetric Point Glow */}
+      <pointLight position={[0, 6, 0]} color="#00e5ff" intensity={40} distance={38} decay={2} />
+    </group>
+  );
+}
+
+// -------------------------------------------------------------------------
 // STABLE, SILKY-SMOOTH CAMERA CONTROLLER
 // -------------------------------------------------------------------------
 interface OrbitControlsRef {
@@ -704,62 +1240,56 @@ interface OrbitControlsRef {
 }
 
 function CameraController() {
+  const { camera } = useThree();
   const orbitRef = useRef<OrbitControlsRef | null>(null);
   const cameraDistance = useGame((s) => s.cameraDistance);
   const cameraAzimuth = useGame((s) => s.cameraAzimuth);
   const cameraPolar = useGame((s) => s.cameraPolar);
-
-  const prevDistRef = useRef(cameraDistance);
+  const isInvestigating = useGame((s) => s.investigationModalOpen);
   const isFirstMount = useRef(true);
 
-  // Smooth zoom synchronization
+  // Silky-smooth zoom and distance interpolation that reliably affects the 3D scene
   useFrame(() => {
-    if (orbitRef.current && prevDistRef.current !== cameraDistance) {
-      try {
-        const currentDist = orbitRef.current.getDistance();
-        if (currentDist > 0.01) {
-          const delta = cameraDistance - currentDist;
-          if (Math.abs(delta) > 0.1) {
-            if (delta < 0) orbitRef.current.dollyIn(1.04);
-            else orbitRef.current.dollyOut(1.04);
-            orbitRef.current.update();
-          } else {
-            prevDistRef.current = cameraDistance;
-          }
-        }
-      } catch {
-        // Safe fallback
-      }
+    if (!orbitRef.current || isInvestigating) return; // Freeze 3D camera completely while investigating!
+    const target = new THREE.Vector3(0, 1.2, 0);
+
+    if (isFirstMount.current) {
+      isFirstMount.current = false;
+      orbitRef.current.setAzimuthalAngle(cameraAzimuth);
+      orbitRef.current.setPolarAngle(cameraPolar);
+      const dir = camera.position.clone().sub(target).normalize();
+      camera.position.copy(target).addScaledVector(dir, cameraDistance);
+      orbitRef.current.update();
+      return;
     }
-  });
 
-  // Smooth orbit synchronization
-  useFrame(() => {
-    if (orbitRef.current) {
-      if (isFirstMount.current) {
-        isFirstMount.current = false;
-        orbitRef.current.setAzimuthalAngle(cameraAzimuth);
-        orbitRef.current.setPolarAngle(cameraPolar);
+    const curOffset = camera.position.clone().sub(target);
+    const curDist = curOffset.length();
+    const diff = cameraDistance - curDist;
+
+    if (Math.abs(diff) > 0.05) {
+      const nextDist = THREE.MathUtils.lerp(curDist, cameraDistance, 0.18);
+      curOffset.normalize().multiplyScalar(nextDist);
+      camera.position.copy(target).add(curOffset);
+      orbitRef.current.update();
+    }
+
+    try {
+      const curAz = orbitRef.current.getAzimuthalAngle();
+      const diffAz = cameraAzimuth - curAz;
+      if (Math.abs(diffAz) > 0.01) {
+        orbitRef.current.setAzimuthalAngle(curAz + diffAz * 0.15);
         orbitRef.current.update();
-        return;
       }
-
-      try {
-        const curAz = orbitRef.current.getAzimuthalAngle();
-        const diffAz = cameraAzimuth - curAz;
-        if (Math.abs(diffAz) > 0.01) {
-          orbitRef.current.setAzimuthalAngle(curAz + diffAz * 0.15);
-          orbitRef.current.update();
-        }
-      } catch {
-        // Safe fallback
-      }
+    } catch {
+      // Safe fallback
     }
   });
 
   return (
     <OrbitControls
       ref={orbitRef}
+      enabled={!isInvestigating}
       enablePan={false}
       enableDamping={true}
       dampingFactor={0.08}
@@ -777,6 +1307,8 @@ function CameraController() {
 // -------------------------------------------------------------------------
 export function GameScene() {
   const activeAlerts = useGame((s) => s.nodes.filter((n) => n.status === "infected").length);
+  const missionProgress = useGame((s) => s.missionProgress);
+  const activeLinks = getActiveLinks(missionProgress);
 
   return (
     <Canvas
@@ -805,19 +1337,23 @@ export function GameScene() {
       <pointLight position={[-4, 7.5, 0]} intensity={16} distance={18} color="#ffffff" />
       <pointLight position={[4, 7.5, 0]} intensity={16} distance={18} color="#ffffff" />
 
+      {/* 3D Office Architecture & Unified Bottom-Corner Lounge Suite */}
       <CyberTeamOfficeArchitecture />
+      <CyberCornerLoungeWithTV />
+      <CyberZeroTrustFirewallShield />
 
-      {/* Laser network communication links */}
-      {NETWORK.links.map(([a, b]) => (
+      {/* Continuous animated green laser data links between active devices */}
+      {activeLinks.map(([a, b]) => (
         <CyberNetworkLink key={`${a}-${b}`} a={a} b={b} />
       ))}
 
-      {/* Interactive 3D Nodes (Desks with PCs, Servers, Routers) */}
+      {/* All physical 3D PCs, Servers, Routers in the office remain permanently visible */}
       {NETWORK.nodes.map((node) => (
         <InteractiveDevice key={node.id} index={node.id} />
       ))}
 
       <MissionLoop />
+      <ScreenProjector />
       <CameraController />
     </Canvas>
   );

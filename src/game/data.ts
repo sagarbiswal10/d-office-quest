@@ -183,6 +183,52 @@ export const TOTAL_THREATS = CAMPAIGN.length;
 export const OPENING_DELAY = 5;
 export const WAVE_DELAY = 8;
 
+// Dynamic Network Expansion with Mission Progress:
+// Tier 0 (0/5): 1 Server (SRV-01: 0), 1 PC (WS-01: 8), 1 Router (RTR-01: 4)
+// Tier 1 (1/5): +1 PC (WS-02: 9) -> 4 devices
+// Tier 2 (2/5): +1 Server (SRV-02: 1) -> 5 devices
+// Tier 3 (3/5): +1 Router (WIFI-01: 5) -> 6 devices
+// Tier 4 (4/5): +1 PC (WS-03: 10) & +1 Server (SRV-03: 2) -> 8 devices
+// Tier 5 (5/5): +1 PC (WS-04: 11), +1 Server (SRV-04: 3), +1 Router (RTR-02: 6) -> 11 devices
+export function getActiveNodeIds(progress: number): number[] {
+  if (progress <= 0) return [0, 8, 4];
+  if (progress === 1) return [0, 8, 9, 4];
+  if (progress === 2) return [0, 1, 8, 9, 4];
+  if (progress === 3) return [0, 1, 8, 9, 4, 5];
+  if (progress === 4) return [0, 1, 2, 8, 9, 10, 4, 5];
+  return [0, 1, 2, 3, 8, 9, 10, 11, 4, 5, 6];
+}
+
+export function getActiveLinks(progress: number): [number, number][] {
+  const activeSet = new Set(getActiveNodeIds(progress));
+  const candidateLinks: [number, number][] = [
+    [0, 8],
+    [8, 4],
+    [0, 4],
+    [8, 9],
+    [4, 9],
+    [0, 9],
+    [0, 1],
+    [1, 8],
+    [1, 4],
+    [4, 5],
+    [5, 9],
+    [1, 5],
+    [1, 2],
+    [2, 10],
+    [8, 10],
+    [5, 10],
+    [2, 3],
+    [3, 11],
+    [5, 6],
+    [6, 11],
+    [10, 11],
+    [0, 3],
+    [4, 6],
+  ];
+  return candidateLinks.filter(([a, b]) => activeSet.has(a) && activeSet.has(b));
+}
+
 function buildNetwork() {
   const nodes: NetNode[] = [];
   const links: [number, number][] = [];

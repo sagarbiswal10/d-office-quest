@@ -2,10 +2,9 @@ import { create } from "zustand";
 import {
   CAMPAIGN,
   NETWORK,
-  OPENING_DELAY,
   THREATS,
-  TOTAL_THREATS,
-  WAVE_DELAY,
+  getActiveNodeIds,
+  getActiveLinks,
   type ThreatType,
 } from "./data";
 import { sfx } from "./audio";
@@ -16,6 +15,7 @@ export interface NodeState {
   infection: number;
   threat: ThreatType | null;
   investigated: boolean;
+  threatIdentified: boolean;
   isolatedFor: number;
 }
 export type Phase = "menu" | "playing" | "paused" | "results";
@@ -32,6 +32,12 @@ export interface LeaderEntry {
   date: string;
 }
 
+export interface AttackAlert {
+  title: string;
+  deviceLabel: string;
+  kind: string;
+}
+
 interface GameState {
   phase: Phase;
   playerName: string;
@@ -45,6 +51,7 @@ interface GameState {
   combo: number;
   maxCombo: number;
   contained: number;
+  missionProgress: number; // 0 to 5
   breaches: number;
   nextThreat: number;
   spawnIn: number;
@@ -54,11 +61,15 @@ interface GameState {
   victory: boolean;
   runId: string;
 
+  // Active High-Priority Attack Alert Banner
+  activeAttackAlert: AttackAlert | null;
+
   // Investigation Modal Dossier
   investigationModalOpen: boolean;
   activeInvestigationNodeId: number | null;
   openInvestigationModal: (nodeId?: number) => void;
   closeInvestigationModal: () => void;
+  markThreatIdentified: (nodeId: number) => void;
 
   // MediaPipe Vision & Gesture State
   cameraActive: boolean;
@@ -70,6 +81,8 @@ interface GameState {
     crosshair: { x: number; y: number; active: boolean; label: string } | null,
   ) => void;
   isolateBanner: { label: string; time: number } | null;
+  nodeScreenCoords: Record<number, { x: number; y: number }>;
+  setNodeScreenCoords: (coords: Record<number, { x: number; y: number }>) => void;
 
   // 360 Camera & Zoom
   cameraAzimuth: number;
@@ -86,7 +99,7 @@ interface GameState {
   select: (id: number | null) => void;
   investigate: (nodeId?: number) => boolean;
   isolate: (nodeId?: number) => boolean;
-  firewall: () => void;
+  firewall: () => boolean;
   tick: (dt: number) => void;
 }
 
@@ -96,6 +109,7 @@ const fresh = (): NodeState[] =>
     infection: 0,
     threat: null,
     investigated: false,
+    threatIdentified: false,
     isolatedFor: 0,
   }));
 
@@ -122,7 +136,14 @@ export function saveScore(entry: LeaderEntry) {
 function infect(nodes: NodeState[], id: number, threat: ThreatType) {
   const node = nodes[id];
   if (!node || node.status !== "clean") return false;
-  nodes[id] = { status: "infected", infection: 0.1, threat, investigated: false, isolatedFor: 0 };
+  nodes[id] = {
+    status: "infected",
+    infection: 0.12,
+    threat,
+    investigated: false,
+    threatIdentified: false,
+    isolatedFor: 0,
+  };
   return true;
 }
 
@@ -133,12 +154,13 @@ function finish(
   reason: string,
 ) {
   sfx.end();
-  const integrityBonus = victory ? Math.round(state.integrity * 18) : 0;
-  const paceBonus = victory ? Math.max(0, 1800 - Math.round(state.elapsed * 6)) : 0;
+  const integrityBonus = victory ? Math.round(state.integrity * 20) : 0;
+  const paceBonus = victory ? Math.max(0, 2000 - Math.round(state.elapsed * 6)) : 0;
   set({
     phase: "results",
     victory,
     investigationModalOpen: false,
+    activeAttackAlert: null,
     score: state.score + integrityBonus + paceBonus,
     endReason: `${reason}${victory ? ` Integrity +${integrityBonus}, response +${paceBonus}.` : ""}`,
   });
@@ -157,36 +179,68 @@ export const useGame = create<GameState>((set, get) => ({
   combo: 1,
   maxCombo: 1,
   contained: 0,
+  missionProgress: 0,
   breaches: 0,
   nextThreat: 0,
-  spawnIn: OPENING_DELAY,
-  log: [],
+  spawnIn: 4.0, // Initial 4 seconds of healthy green network flow
+  activeAttackAlert: null,
+  log: [
+    {
+      id: ++logId,
+      text: "SOC SHIFT READY: 0/5 Mission Progress. Monitoring 1 Server, 1 PC, 1 Router.",
+      tone: "info",
+    },
+  ],
   lastTip: null,
   endReason: "",
   victory: false,
   runId: "",
 
-  // Modal
   investigationModalOpen: false,
   activeInvestigationNodeId: null,
   openInvestigationModal: (nodeId) => {
-    const target = nodeId !== undefined ? nodeId : get().selected;
-    if (target !== null && target !== undefined) {
-      set({ investigationModalOpen: true, activeInvestigationNodeId: target, selected: target });
+    const s = get();
+    const target = nodeId !== undefined ? nodeId : s.selected;
+    if (target !== null && s.nodes[target]) {
+      set({ investigationModalOpen: true, activeInvestigationNodeId: target });
     }
   },
-  closeInvestigationModal: () => set({ investigationModalOpen: false }),
+  closeInvestigationModal: () => {
+    set({ investigationModalOpen: false });
+  },
 
-  // MediaPipe
+  markThreatIdentified: (nodeId: number) => {
+    const s = get();
+    const nodes = [...s.nodes];
+    if (nodes[nodeId]) {
+      nodes[nodeId] = {
+        ...nodes[nodeId],
+        investigated: true,
+        threatIdentified: true,
+      };
+      const label = NETWORK.nodes[nodeId]?.label ?? "Host";
+      set({
+        nodes,
+        log: push(
+          s.log,
+          `✓ THREAT IDENTIFIED: ${label} malware signature verified. ISOLATE UNLOCKED.`,
+          "good",
+        ),
+      });
+      sfx.threatIdentified();
+    }
+  },
+
   cameraActive: false,
-  setCameraActive: (active) => set({ cameraActive: active }),
+  setCameraActive: (cameraActive) => set({ cameraActive }),
   activeGesture: null,
-  setActiveGesture: (gesture) => set({ activeGesture: gesture }),
+  setActiveGesture: (activeGesture) => set({ activeGesture }),
   pointingCrosshair: null,
-  setPointingCrosshair: (c) => set({ pointingCrosshair: c }),
+  setPointingCrosshair: (pointingCrosshair) => set({ pointingCrosshair }),
   isolateBanner: null,
+  nodeScreenCoords: {},
+  setNodeScreenCoords: (nodeScreenCoords) => set({ nodeScreenCoords }),
 
-  // 360 Orbit & Zoom
   cameraAzimuth: 0,
   cameraPolar: 0.95,
   cameraDistance: 24,
@@ -198,7 +252,7 @@ export const useGame = create<GameState>((set, get) => ({
   },
   adjustZoom: (delta) => {
     set((s) => {
-      const nextDist = Math.max(12, Math.min(34, s.cameraDistance + delta));
+      const nextDist = Math.max(8, Math.min(42, s.cameraDistance + delta));
       if (delta < 0) sfx.zoomIn();
       else if (delta > 0) sfx.zoomOut();
       return { cameraDistance: nextDist };
@@ -220,38 +274,45 @@ export const useGame = create<GameState>((set, get) => ({
       combo: 1,
       maxCombo: 1,
       contained: 0,
+      missionProgress: 0,
       breaches: 0,
       nextThreat: 0,
-      spawnIn: OPENING_DELAY,
+      spawnIn: 4.0, // starts attack after a few initial seconds of green operation
+      activeAttackAlert: null,
       investigationModalOpen: false,
       activeInvestigationNodeId: null,
-      cameraAzimuth: 0,
-      cameraPolar: 0.95,
-      cameraDistance: 24,
+      runId: Math.random().toString(36).slice(2, 9),
       log: [
         {
           id: ++logId,
-          text: "SOC Shift started. Real-time network telemetry active.",
-          tone: "info",
+          text: "ENTERPRISE SOC ONLINE: Continuous healthy traffic between Server, PC, Router. Threat monitor active.",
+          tone: "good",
         },
       ],
-      lastTip: null,
-      endReason: "",
-      victory: false,
-      runId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     });
   },
-  toMenu: () => set({ phase: "menu", selected: null, investigationModalOpen: false }),
-  togglePause: () =>
-    set((s) =>
-      s.phase === "playing"
-        ? { phase: "paused" }
-        : s.phase === "paused"
-          ? { phase: "playing" }
-          : {},
-    ),
+
+  toMenu: () => {
+    const s = get();
+    if (s.phase === "results" && s.playerName.trim()) {
+      saveScore({
+        runId: s.runId,
+        name: s.playerName.trim().slice(0, 16),
+        score: s.score,
+        rank: s.victory ? "SPECIALIST" : "DEFENDER",
+        date: new Date().toISOString(),
+      });
+    }
+    set({ phase: "menu", investigationModalOpen: false, activeAttackAlert: null });
+  },
+
+  togglePause: () => {
+    const p = get().phase;
+    if (p === "playing") set({ phase: "paused" });
+    else if (p === "paused") set({ phase: "playing" });
+  },
+
   select: (id) => {
-    if (get().phase !== "playing") return;
     if (id !== null && id !== get().selected) sfx.select();
     set({ selected: id });
   },
@@ -260,44 +321,59 @@ export const useGame = create<GameState>((set, get) => ({
     const s = get();
     if (s.phase !== "playing") return false;
 
-    // Pick targeted node, or currently selected node, or first active infected node
+    // RULE: The player must point at / select the infected device.
+    // The investigation panel MUST NEVER appear automatically.
     let target = targetNodeId !== undefined ? targetNodeId : s.selected;
-    if (target === null || target === undefined || !s.nodes[target]) {
-      const firstInfected = s.nodes.findIndex((n) => n.status === "infected");
-      if (firstInfected >= 0) target = firstInfected;
+
+    if (target === null || target === undefined) {
+      if (s.pointingCrosshair?.active) {
+        const found = NETWORK.nodes.findIndex((n) => n.label === s.pointingCrosshair?.label);
+        if (found >= 0) target = found;
+      }
     }
 
-    if (target === null || target === undefined) return false;
-    const node = s.nodes[target];
-    const label = NETWORK.nodes[target]?.label ?? "Device";
-    if (!node) return false;
-
-    if (node.status !== "infected") {
-      sfx.error();
-      set({ log: push(s.log, `${label}: No active malware signature detected.`, "info") });
+    if (target === null || target === undefined || !s.nodes[target]) {
       return false;
     }
 
+    const node = s.nodes[target];
+    const label = NETWORK.nodes[target]?.label ?? "Device";
+
     sfx.investigate();
-    const nodes = [...s.nodes];
-    nodes[target] = {
+
+    // If node is clean (non-affected component):
+    if (node.status !== "infected") {
+      set({
+        selected: target,
+        investigationModalOpen: true,
+        activeInvestigationNodeId: target,
+        log: push(
+          s.log,
+          `✓ ${label} INSPECTED: Clean host. Zero malware signatures detected.`,
+          "good",
+        ),
+      });
+      return true;
+    }
+
+    // If node is infected:
+    const nextNodes = [...s.nodes];
+    nextNodes[target] = {
       ...node,
       investigated: true,
-      infection: Math.max(0.04, node.infection - 0.15),
+      threatIdentified: true,
     };
-    const threat = node.threat ? THREATS[node.threat] : null;
+    const threatName = node.threat ? (THREATS[node.threat]?.name ?? "Malware") : "Malware";
 
     set({
-      nodes,
       selected: target,
-      score: s.score + 80 * s.combo,
-      lastTip: threat?.tip ?? null,
+      nodes: nextNodes,
       investigationModalOpen: true,
       activeInvestigationNodeId: target,
       log: push(
         s.log,
-        `FORENSIC INVESTIGATION: ${label} infected with ${threat?.name ?? "Malware"}. Threat dossier opened.`,
-        "info",
+        `🚨 ${label} COMPROMISED: ${threatName} signature detected! ISOLATE UNLOCKED.`,
+        "bad",
       ),
     });
     return true;
@@ -310,17 +386,13 @@ export const useGame = create<GameState>((set, get) => ({
     let target = targetNodeId !== undefined ? targetNodeId : s.selected;
     if (target === null || target === undefined) {
       if (s.activeInvestigationNodeId !== null) target = s.activeInvestigationNodeId;
-      else {
-        // Look for investigated infected node
-        const investigatedIndex = s.nodes.findIndex(
-          (n) => n.status === "infected" && n.investigated,
-        );
-        if (investigatedIndex >= 0) target = investigatedIndex;
-        else {
-          const firstInfected = s.nodes.findIndex((n) => n.status === "infected");
-          if (firstInfected >= 0) target = firstInfected;
-        }
-      }
+    }
+
+    // If still no target, check if any active node is infected
+    if (target === null || target === undefined) {
+      const activeIds = getActiveNodeIds(s.missionProgress);
+      const infectedId = activeIds.find((id) => s.nodes[id]?.status === "infected");
+      if (infectedId !== undefined) target = infectedId;
     }
 
     if (target === null || target === undefined) return false;
@@ -335,45 +407,64 @@ export const useGame = create<GameState>((set, get) => ({
     }
 
     sfx.blinkIsolate();
-    const isInvestigated = node.investigated;
-    const gain = Math.round((isInvestigated ? 350 : 220) * s.combo);
-    const combo = Math.min(8, s.combo + 1);
-    const contained = s.contained + 1;
+    const nextProgress = Math.min(5, s.missionProgress + 1);
+    const nextNodes = [...s.nodes];
 
-    const nodes = [...s.nodes];
-    nodes[target] = {
-      status: "isolated",
+    // Immediately returns to normal with green data packets flowing again!
+    nextNodes[target] = {
+      status: "clean",
       infection: 0,
       threat: null,
       investigated: false,
-      isolatedFor: 5.0,
+      threatIdentified: false,
+      isolatedFor: 0,
     };
 
+    const gain = Math.round(500 * s.combo);
+    const combo = Math.min(8, s.combo + 1);
+    const contained = s.contained + 1;
+
+    // Continuous operation: random interval for next incident (3.5 to 6.5s)
+    const randomNextInterval = 3.5 + Math.random() * 3.0;
+
+    let expansionNote = "";
+    if (nextProgress === 1) expansionNote = " · [1/5: +1 PC (WS-02) added to traffic]";
+    else if (nextProgress === 2) expansionNote = " · [2/5: +1 Server (SRV-02) added to traffic]";
+    else if (nextProgress === 3) expansionNote = " · [3/5: +1 Router (WIFI-01) added to traffic]";
+    else if (nextProgress === 4) expansionNote = " · [4/5: +1 PC & +1 Server added to traffic]";
+    else if (nextProgress === 5)
+      expansionNote = " · [5/5: Enterprise Core Connected (Multi-Threat Active)]";
+
+    const keepModalForConfirmation = s.investigationModalOpen;
+
     set({
-      nodes,
+      nodes: nextNodes,
+      missionProgress: nextProgress,
       score: s.score + gain,
       combo,
       maxCombo: Math.max(s.maxCombo, combo),
       contained,
-      energy: Math.min(100, s.energy + 15),
-      spawnIn: WAVE_DELAY,
-      investigationModalOpen: false,
-      activeInvestigationNodeId: null,
+      energy: Math.min(100, s.energy + 20),
+      spawnIn: randomNextInterval,
+      activeAttackAlert: null,
+      investigationModalOpen: keepModalForConfirmation,
+      activeInvestigationNodeId: keepModalForConfirmation ? target : null,
       selected: null,
       isolateBanner: { label, time: Date.now() },
       log: push(
         s.log,
-        `BIOMETRIC ISOLATION: ${label} quarantined successfully (+${gain} pts).`,
+        `✓ THREAT ISOLATED: ${label} quarantined. Network operating normal (${nextProgress}/5)${expansionNote}.`,
         "good",
       ),
     });
 
-    if (contained >= TOTAL_THREATS && s.nextThreat >= TOTAL_THREATS) {
+    // Check victory condition when all 5 incidents are neutralized
+    if (nextProgress >= 5 && contained >= 5) {
       finish(
         set,
-        { ...s, nodes, contained },
+        { ...s, nodes: nextNodes, contained, missionProgress: 5 },
         true,
-        "All enterprise cyber threats neutralized. SOC shift accomplished.",
+        "Enterprise network secured! All 5 mission incidents neutralized.",
       );
     }
     return true;
@@ -381,77 +472,104 @@ export const useGame = create<GameState>((set, get) => ({
 
   firewall: () => {
     const s = get();
-    if (s.phase !== "playing" || s.firewallFor > 0) return;
-    if (s.energy < 35) {
-      sfx.error();
-      set({ log: push(s.log, "Counter-Firewall requires 35% capacitor charge.", "bad") });
-      return;
-    }
+    if (s.phase !== "playing" || s.firewallFor > 0) return false;
     sfx.firewall();
     set({
-      energy: s.energy - 35,
-      firewallFor: 9,
-      log: push(s.log, "COUNTER-FIREWALL ACTIVE: Enterprise ingress filtered for 9s.", "good"),
+      energy: Math.max(0, s.energy - 10),
+      firewallFor: 6.5,
+      log: push(
+        s.log,
+        "🛡️ ZERO-TRUST FIREWALL SHIELD ACTIVATED: All threat growth completely frozen for 6.5s!",
+        "good",
+      ),
     });
+    return true;
   },
 
   tick: (dt) => {
     const s = get();
     if (s.phase !== "playing") return;
     const nodes = [...s.nodes];
-    let { integrity, log, breaches, spawnIn, combo, nextThreat } = s;
-    const firewallFactor = s.firewallFor > 0 ? 0.16 : 1;
+    let { integrity, log, breaches, spawnIn, combo, nextThreat, activeAttackAlert } = s;
+    const isFirewallActive = s.firewallFor > 0;
+    const firewallFactor = isFirewallActive ? 0 : 1;
+
+    // Active nodes participating in cyber network traffic
+    const activeNodeIds = getActiveNodeIds(s.missionProgress);
     let activeThreats = 0;
 
-    for (let i = 0; i < nodes.length; i++) {
+    for (const i of activeNodeIds) {
       const node = nodes[i];
       if (!node) continue;
-      if (node.status === "isolated") {
-        const left = node.isolatedFor - dt;
-        nodes[i] =
-          left <= 0 ? { ...node, status: "clean", isolatedFor: 0 } : { ...node, isolatedFor: left };
-      } else if (node.status === "infected" && node.threat) {
-        activeThreats++;
-        const growthRate = THREATS[node.threat]?.growth ?? 0.03;
-        const infection =
-          node.infection + growthRate * firewallFactor * dt * (node.investigated ? 0.5 : 1);
-        integrity -= infection * 0.09 * dt;
 
-        if (infection >= 1) {
-          breaches++;
-          combo = 1;
-          integrity -= 8.5;
-          sfx.breach();
-          nodes[i] = { ...node, infection: 0.5 };
-          const neighbor = NETWORK.neighbors[i]?.find((id) => nodes[id]?.status === "clean");
-          if (neighbor !== undefined && node.threat) infect(nodes, neighbor, node.threat);
-          log = push(
-            log,
-            `CRITICAL BREACH: ${NETWORK.nodes[i]?.label ?? "Host"} lateral spread detected!`,
-            "bad",
-          );
-        } else {
-          nodes[i] = { ...node, infection };
+      if (node.status === "infected" && node.threat) {
+        activeThreats++;
+        if (!isFirewallActive) {
+          const growthRate = THREATS[node.threat]?.growth ?? 0.03;
+          const infection =
+            node.infection + growthRate * firewallFactor * dt * (node.investigated ? 0.5 : 1);
+          integrity -= infection * 0.09 * dt;
+
+          if (infection >= 1) {
+            breaches++;
+            combo = 1;
+            integrity -= 8.5;
+            sfx.breach();
+            nodes[i] = { ...node, infection: 0.5 };
+            const neighbors = NETWORK.neighbors[i]?.filter((id) => activeNodeIds.includes(id));
+            const neighbor = neighbors?.find((id) => nodes[id]?.status === "clean");
+            if (neighbor !== undefined && node.threat) infect(nodes, neighbor, node.threat);
+            log = push(
+              log,
+              `CRITICAL BREACH: ${NETWORK.nodes[i]?.label ?? "Host"} lateral spread detected!`,
+              "bad",
+            );
+          } else {
+            nodes[i] = { ...node, infection };
+          }
         }
       }
     }
 
-    if (activeThreats === 0 && nextThreat < TOTAL_THREATS) {
+    // Continuous attack trigger: After a random interval without countdowns
+    // At Tier 5 (5/5), allow multiple simultaneous fictional cyber incidents!
+    const maxSimultaneous = s.missionProgress >= 5 ? 3 : s.missionProgress >= 4 ? 2 : 1;
+
+    if (activeThreats < maxSimultaneous && s.contained < 5) {
       spawnIn -= dt;
       if (spawnIn <= 0) {
-        const candidates = nodes
-          .map((n, i) => (n.status === "clean" && NETWORK.nodes[i]?.kind !== "router" ? i : -1))
-          .filter((i) => i >= 0);
-        if (candidates.length) {
-          const id = candidates[(nextThreat * 3 + 2) % candidates.length];
-          const threat = CAMPAIGN[nextThreat];
-          if (id !== undefined && threat && infect(nodes, id, threat)) {
+        // Pick an active device to infect
+        const cleanActiveIds = activeNodeIds.filter((id) => nodes[id]?.status === "clean");
+        if (cleanActiveIds.length > 0) {
+          const pickId = cleanActiveIds[Math.floor(Math.random() * cleanActiveIds.length)]!;
+          const threatTypes: ThreatType[] = [
+            "malware",
+            "phishing",
+            "ransomware",
+            "botnet",
+            "exfiltration",
+          ];
+          const threat = threatTypes[s.missionProgress % threatTypes.length] || "malware";
+
+          if (infect(nodes, pickId, threat)) {
             nextThreat++;
             sfx.alert();
+            const def = NETWORK.nodes[pickId];
+            let alertTitle = "CRITICAL SERVER FAILURE DETECTED";
+            if (def?.kind === "computer") alertTitle = "CRITICAL WORKSTATION COMPROMISED";
+            else if (def?.kind === "router") alertTitle = "CORE ROUTER BREACH DETECTED";
+            else alertTitle = "SERVER UNDER ATTACK";
+
+            activeAttackAlert = {
+              title: alertTitle,
+              deviceLabel: def?.label ?? "DEVICE",
+              kind: def?.kind ?? "server",
+            };
+
             log = push(
               log,
-              `INCIDENT ALERT ${nextThreat}/${TOTAL_THREATS}: Host ${NETWORK.nodes[id]?.label ?? "System"} showing anomalous telemetry.`,
-              "info",
+              `🚨 ${alertTitle}: ${def?.label ?? "System"} network anomaly detected!`,
+              "bad",
             );
           }
         }
@@ -466,6 +584,7 @@ export const useGame = create<GameState>((set, get) => ({
       spawnIn,
       nextThreat,
       combo,
+      activeAttackAlert,
       elapsed: s.elapsed + dt,
       firewallFor: Math.max(0, s.firewallFor - dt),
       energy: Math.min(100, s.energy + dt * 1.6),
