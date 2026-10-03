@@ -38,7 +38,9 @@ export function reportLovableError(error: unknown, context: Record<string, unkno
     message.includes("XNNPACK delegate") ||
     message.includes("TensorFlow Lite") ||
     message.includes("INFO: Created TensorFlow Lite") ||
-    message.startsWith("INFO:")
+    message.startsWith("INFO:") ||
+    message.includes("is not a valid JavaScript MIME type") ||
+    message.includes("valid JavaScript MIME type")
   ) {
     return;
   }

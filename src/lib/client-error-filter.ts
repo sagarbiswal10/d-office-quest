@@ -10,7 +10,9 @@ if (typeof window !== "undefined") {
       str.includes("XNNPACK delegate") ||
       str.includes("TensorFlow Lite") ||
       str.includes("INFO: Created TensorFlow Lite") ||
-      str.startsWith("INFO:")
+      str.startsWith("INFO:") ||
+      str.includes("is not a valid JavaScript MIME type") ||
+      str.includes("valid JavaScript MIME type")
     );
   };
 

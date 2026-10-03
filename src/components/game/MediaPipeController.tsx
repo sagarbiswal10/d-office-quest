@@ -37,7 +37,7 @@ export function MediaPipeController() {
 
   // Real-time HUD gesture badge
   const [currentGestureBadge, setCurrentGestureBadge] = useState<string>(
-    "👈 Left: 'V' Zoom In / 'W' Zoom Out · 👉 Right: 'V' Isolate / Pinch Investigate",
+    "👈 Left: 360° Rotate (Up/Down/Left/Right) · 👉 Right: 'W' Firewall · 'V' Isolate · Point/Pinch",
   );
   const [rightHandStatus, setRightHandStatus] = useState<string>("Ready: Searching for Hands...");
   const [leftHandStatus, setLeftHandStatus] = useState<string>("Left Hand Ready");
@@ -146,18 +146,26 @@ export function MediaPipeController() {
         const { FilesetResolver, HandLandmarker: HandLandmarkerClass } =
           await import("@mediapipe/tasks-vision");
 
-        const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm",
-        );
+        let vision: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>;
+        try {
+          vision = await FilesetResolver.forVisionTasks("/wasm");
+        } catch {
+          vision = await FilesetResolver.forVisionTasks(
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm",
+          );
+        }
 
         if (!isMounted) return;
 
         let handLm: HandLandmarker | null = null;
+        const modelAssetPath = "/wasm/hand_landmarker.task";
+        const fallbackModelPath =
+          "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+
         try {
           handLm = await HandLandmarkerClass.createFromOptions(vision, {
             baseOptions: {
-              modelAssetPath:
-                "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+              modelAssetPath,
               delegate: "GPU",
             },
             runningMode: "VIDEO",
@@ -167,18 +175,37 @@ export function MediaPipeController() {
             minTrackingConfidence: 0.55,
           });
         } catch {
-          handLm = await HandLandmarkerClass.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath:
-                "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-              delegate: "CPU",
-            },
-            runningMode: "VIDEO",
-            numHands: 2,
-            minHandDetectionConfidence: 0.55,
-            minHandPresenceConfidence: 0.55,
-            minTrackingConfidence: 0.55,
-          });
+          try {
+            handLm = await HandLandmarkerClass.createFromOptions(vision, {
+              baseOptions: {
+                modelAssetPath,
+                delegate: "CPU",
+              },
+              runningMode: "VIDEO",
+              numHands: 2,
+              minHandDetectionConfidence: 0.55,
+              minHandPresenceConfidence: 0.55,
+              minTrackingConfidence: 0.55,
+            });
+          } catch {
+            // Secondary fallback to remote model if local fetch failed
+            try {
+              handLm = await HandLandmarkerClass.createFromOptions(vision, {
+                baseOptions: {
+                  modelAssetPath: fallbackModelPath,
+                  delegate: "CPU",
+                },
+                runningMode: "VIDEO",
+                numHands: 2,
+                minHandDetectionConfidence: 0.55,
+                minHandPresenceConfidence: 0.55,
+                minTrackingConfidence: 0.55,
+              });
+            } catch {
+              // Gracefully switch to virtual camera simulation
+              setVirtualCam(true);
+            }
+          }
         }
 
         if (!isMounted) return;
@@ -221,7 +248,7 @@ export function MediaPipeController() {
           videoRef.current?.play().then(() => {
             setCameraActiveState(true);
             showGesture(
-              "👈 Left: 'V' Zoom In / 'W' Zoom Out · 👉 Right: 'V' Isolate / Pinch Investigate",
+              "👈 Left: 360° Rotate (Up/Down/Left/Right) · 👉 Right: 'W' Firewall · 'V' Isolate · Point/Pinch",
             );
           });
         };
@@ -300,49 +327,49 @@ export function MediaPipeController() {
         ctx.stroke();
       }
 
-      // Left Hand: Toggles between 'V' (Zoom In) and 'W' (Zoom Out)
-      const leftX = canvas.width * 0.25;
-      const leftY = canvas.height * 0.55;
-      const isLeftV = Math.sin(simTick * 0.7) > 0;
+      // Left Hand: Moves up/down and left/right in 360° orbit simulation
+      const leftCenterX = canvas.width * 0.25;
+      const leftCenterY = canvas.height * 0.55;
+      const leftX = leftCenterX + Math.cos(simTick * 0.9) * 18;
+      const leftY = leftCenterY + Math.sin(simTick * 0.7) * 14;
 
-      if (isLeftV) {
-        ctx.strokeStyle = "#22c55e";
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(leftX - 8, leftY + 16);
-        ctx.lineTo(leftX - 12, leftY - 24);
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.moveTo(leftX + 8, leftY + 16);
-        ctx.lineTo(leftX + 12, leftY - 24);
-        ctx.stroke();
+      ctx.strokeStyle = "#c084fc";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(leftX, leftY, 9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = "#c084fc";
+      ctx.beginPath();
+      ctx.arc(leftX, leftY, 3.5, 0, Math.PI * 2);
+      ctx.fill();
 
-        ctx.fillStyle = "#4ade80";
-        ctx.font = "bold 9px monospace";
-        ctx.fillText("✌️ LEFT: 'V' SIGN", leftX - 40, leftY + 34);
-        ctx.fillText("[ZOOM IN 🔍+]", leftX - 35, leftY - 28);
-      } else {
-        ctx.strokeStyle = "#c084fc";
+      ctx.fillStyle = "#d8b4fe";
+      ctx.font = "bold 9px monospace";
+      ctx.fillText("👈 LEFT: 360° ORBIT", leftX - 42, leftY + 24);
+      ctx.fillText("[UP/DOWN/LEFT/RIGHT]", leftX - 46, leftY - 14);
+
+      // Right Hand: Cycles between 'W' (Firewall), 'V' (Isolate), and Pinch (Investigate)
+      const rightX = canvas.width * 0.75;
+      const rightY = canvas.height * 0.55;
+      const phaseCycle = Math.floor((simTick * 0.45) % 3);
+
+      if (phaseCycle === 0) {
+        // Right 'W' Sign -> Firewall
+        ctx.strokeStyle = "#00e5ff";
         ctx.lineWidth = 3;
-        [-14, 0, 14].forEach((dx) => {
+        [-12, 0, 12].forEach((dx) => {
           ctx.beginPath();
-          ctx.moveTo(leftX + dx * 0.7, leftY + 16);
-          ctx.lineTo(leftX + dx, leftY - 24);
+          ctx.moveTo(rightX + dx * 0.8, rightY + 16);
+          ctx.lineTo(rightX + dx, rightY - 24);
           ctx.stroke();
         });
 
-        ctx.fillStyle = "#d8b4fe";
+        ctx.fillStyle = "#00e5ff";
         ctx.font = "bold 9px monospace";
-        ctx.fillText("🖖 LEFT: 'W' SIGN", leftX - 40, leftY + 34);
-        ctx.fillText("[ZOOM OUT 🔍-]", leftX - 35, leftY - 28);
-      }
-
-      // Right Hand: Toggles between 'V' (Isolate) and Pinch (Investigate)
-      const rightX = canvas.width * 0.75;
-      const rightY = canvas.height * 0.55;
-      const isRightV = Math.sin(simTick * 0.8) > 0;
-
-      if (isRightV) {
+        ctx.fillText("🖖 RIGHT: 'W' SIGN", rightX - 45, rightY + 34);
+        ctx.fillText("[ENABLE FIREWALL 🛡️]", rightX - 48, rightY - 28);
+      } else if (phaseCycle === 1) {
+        // Right 'V' Sign -> Isolate
         ctx.strokeStyle = "#22c55e";
         ctx.lineWidth = 3;
         ctx.beginPath();
@@ -359,6 +386,7 @@ export function MediaPipeController() {
         ctx.fillText("✌️ RIGHT: 'V' SIGN", rightX - 45, rightY + 36);
         ctx.fillText("[ISOLATE TRIGGER]", rightX - 40, rightY - 30);
       } else {
+        // Right Pinch -> Investigate
         ctx.fillStyle = "#f59e0b";
         ctx.beginPath();
         ctx.arc(rightX, rightY, 7, 0, Math.PI * 2);
@@ -371,7 +399,7 @@ export function MediaPipeController() {
       ctx.fillStyle = "#38bdf8";
       ctx.font = "10px monospace";
       ctx.fillText(
-        "VIRTUAL SENSOR · 👈 LEFT: V(ZOOM IN)/W(ZOOM OUT) · 👉 RIGHT: V(ISOLATE)/PINCH",
+        "VIRTUAL SENSOR · 👈 LEFT: 360° UP/DOWN/LEFT/RIGHT · 👉 RIGHT: 'W' FIREWALL · 'V' ISOLATE",
         8,
         18,
       );
@@ -547,7 +575,7 @@ export function MediaPipeController() {
                   // 1. LEFT HAND:
                   // RULE A: 'V' SIGN -> ZOOM IN
                   // RULE B: 'W' SIGN -> ZOOM OUT
-                  // RULE C: Horizontal Pan -> 360° Orbit
+                  // RULE C: Up/Down & Left/Right -> 360° Orbit (Yaw & Pitch)
                   // NOTE: Background camera is completely locked while investigating box is active
                   // =========================================================================
                   if (isLeftHand) {
@@ -556,34 +584,6 @@ export function MediaPipeController() {
 
                     const mirrorIndexX = (1 - index.x) * canvas.width;
                     const indexY = index.y * canvas.height;
-
-                    // 5-FINGER OPEN PALM -> ACTIVATE EMERGENCY ZERO-TRUST FIREWALL SHIELD
-                    if (isFiveFingers) {
-                      leftVCountRef.current = 0;
-                      leftWCountRef.current = 0;
-
-                      ctx.strokeStyle = "#00e5ff";
-                      ctx.lineWidth = 3;
-                      ctx.strokeRect(mirrorIndexX - 45, indexY - 25, 95, 30);
-
-                      ctx.fillStyle = "#00e5ff";
-                      ctx.font = "bold 11px monospace";
-                      ctx.fillText("🖐️ PALM [FIREWALL]", mirrorIndexX - 40, indexY - 6);
-
-                      currentLeftTag = "5 FINGERS (FIREWALL)";
-                      setLeftHandStatus("🖐️ 5 FINGERS: FIREWALL SHIELD ACTIVATING");
-
-                      if (now - lastActionTimeRef.current.firewall > 1200) {
-                        lastActionTimeRef.current.firewall = now;
-                        const ok = firewall();
-                        if (ok) {
-                          showGesture(
-                            "🛡️ 5-FINGER PALM: EMERGENCY FIREWALL SHIELD ACTIVE (THREATS FROZEN!)",
-                          );
-                        }
-                      }
-                      return;
-                    }
 
                     if (isInvestigating) {
                       setLeftHandStatus("Investigating · Background Camera Paused");
@@ -654,19 +654,40 @@ export function MediaPipeController() {
                     } else {
                       leftVCountRef.current = 0;
                       leftWCountRef.current = 0;
-                      setLeftHandStatus("Left Hand Active (Show V to Zoom In, W to Zoom Out)");
+                      setLeftHandStatus("Left Hand: Move Up/Down/Left/Right to Rotate 360°");
                     }
 
-                    // C. 360° ORBIT (Left hand horizontal movement)
+                    // C. 360° ORBIT (Left hand horizontal & vertical movement: Up/Down tilts pitch, Left/Right orbits yaw)
                     const curX = mirrorWristX;
+                    const curY = wrist.y;
                     const prevPos = prevLeftHandPosRef.current;
                     if (prevPos !== null) {
                       const deltaX = curX - prevPos.x;
-                      if (Math.abs(deltaX) > 0.012) {
-                        adjustOrbit(deltaX * 3.5, 0);
+                      const deltaY = curY - prevPos.y;
+                      let orbitChanged = false;
+                      let dAz = 0;
+                      let dPol = 0;
+
+                      // Smooth horizontal pan
+                      if (Math.abs(deltaX) > 0.01) {
+                        const rawAz = deltaX * 2.8;
+                        dAz = Math.max(-0.045, Math.min(0.045, rawAz));
+                        orbitChanged = true;
+                      }
+
+                      // Much gentler, silky-smooth vertical pitch (reduced sensitivity, clamped per frame)
+                      if (Math.abs(deltaY) > 0.015) {
+                        const rawPol = deltaY * 0.32;
+                        dPol = Math.max(-0.012, Math.min(0.012, rawPol));
+                        orbitChanged = true;
+                      }
+
+                      if (orbitChanged) {
+                        adjustOrbit(dAz, dPol);
+                        showGesture("👈 LEFT HAND: 360° ROTATE (UP/DOWN/LEFT/RIGHT)");
                       }
                     }
-                    prevLeftHandPosRef.current = { x: curX, y: wrist.y };
+                    prevLeftHandPosRef.current = { x: curX, y: curY };
                   }
 
                   // =========================================================================
@@ -694,7 +715,42 @@ export function MediaPipeController() {
                         useGame.getState().setPointingCrosshair(null);
                       }
 
-                      // 1. Right 'V' Sign -> Isolate the host in the box
+                      // 1. Right 'W' Sign -> Enable Firewall
+                      if (isWSign) {
+                        rightVCountRef.current = 0;
+                        ctx.strokeStyle = "#00e5ff";
+                        ctx.lineWidth = 3;
+                        const mirrorMiddleX = (1 - middle.x) * canvas.width;
+                        const middleY = middle.y * canvas.height;
+                        const mirrorRingX = (1 - ring.x) * canvas.width;
+                        const ringY = ring.y * canvas.height;
+
+                        ctx.beginPath();
+                        ctx.moveTo(mirrorIndexX, indexY);
+                        ctx.lineTo(mirrorMiddleX, middleY);
+                        ctx.lineTo(mirrorRingX, ringY);
+                        ctx.stroke();
+
+                        ctx.fillStyle = "#00e5ff";
+                        ctx.font = "bold 11px monospace";
+                        ctx.fillText("🖖 'W' [ENABLE FIREWALL]", mirrorIndexX - 45, indexY - 20);
+
+                        currentRightTag = "W (FIREWALL)";
+                        setRightHandStatus("🖖 RIGHT 'W': ENABLING FIREWALL SHIELD");
+
+                        if (now - lastActionTimeRef.current.firewall > 1100) {
+                          lastActionTimeRef.current.firewall = now;
+                          const ok = firewall();
+                          if (ok) {
+                            showGesture(
+                              "🛡️ RIGHT HAND 'W' SIGN: EMERGENCY FIREWALL SHIELD ENABLED!",
+                            );
+                          }
+                        }
+                        return;
+                      }
+
+                      // 2. Right 'V' Sign -> Isolate the host in the box
                       if (isVSign) {
                         rightVCountRef.current++;
                         ctx.strokeStyle = "#22c55e";
@@ -727,8 +783,8 @@ export function MediaPipeController() {
                           }
                         }
                       }
-                      // 2. Strict 4-Fingers (Thumb Tucked, 4 Fingers Extended) -> Dismiss box
-                      else if (isFourFingers && !isFiveFingers && !isVSign) {
+                      // 3. Strict 4-Fingers (Thumb Tucked, 4 Fingers Extended) -> Dismiss box
+                      else if (isFourFingers && !isFiveFingers && !isVSign && !isWSign) {
                         rightVCountRef.current = 0;
                         ctx.strokeStyle = "#38bdf8";
                         ctx.lineWidth = 2.5;
@@ -747,40 +803,55 @@ export function MediaPipeController() {
                           showGesture("🖐️ 4 RIGHT FINGERS: DISMISSED INVESTIGATION BOX");
                           sfx.select();
                         }
-                      }
-                      // If 5 fingers are shown (open palm with thumb out), trigger Emergency Firewall!
-                      else if (isFiveFingers) {
-                        rightVCountRef.current = 0;
-                        ctx.strokeStyle = "#00e5ff";
-                        ctx.lineWidth = 3;
-                        ctx.strokeRect(mirrorIndexX - 45, indexY - 25, 95, 30);
-
-                        ctx.fillStyle = "#00e5ff";
-                        ctx.font = "bold 11px monospace";
-                        ctx.fillText("🖐️ PALM [FIREWALL]", mirrorIndexX - 40, indexY - 6);
-
-                        currentRightTag = "5 FINGERS (FIREWALL)";
-                        setRightHandStatus("🖐️ 5 FINGERS: FIREWALL SHIELD ACTIVATING");
-
-                        if (now - lastActionTimeRef.current.firewall > 1200) {
-                          lastActionTimeRef.current.firewall = now;
-                          const ok = firewall();
-                          if (ok) {
-                            showGesture(
-                              "🛡️ 5-FINGER PALM: EMERGENCY FIREWALL SHIELD ACTIVE (THREATS FROZEN!)",
-                            );
-                          }
-                        }
                       } else {
                         rightVCountRef.current = 0;
                         setRightHandStatus(
-                          "Investigating: Show 'V' to Isolate · 4 Fingers (Thumb In) to Dismiss",
+                          "Investigating: Show 'W' to Shield · 'V' to Isolate · 4 Fingers to Dismiss",
                         );
                       }
                       return;
                     }
 
-                    // A. RIGHT 'V' SIGN -> ISOLATE
+                    // A. RIGHT 'W' SIGN -> ENABLE EMERGENCY ZERO-TRUST FIREWALL SHIELD
+                    if (isWSign) {
+                      rightVCountRef.current = 0;
+                      rightPinchHoldFramesRef.current = 0;
+
+                      ctx.strokeStyle = "#00e5ff";
+                      ctx.lineWidth = 3;
+                      const mirrorMiddleX = (1 - middle.x) * canvas.width;
+                      const middleY = middle.y * canvas.height;
+                      const mirrorRingX = (1 - ring.x) * canvas.width;
+                      const ringY = ring.y * canvas.height;
+
+                      ctx.beginPath();
+                      ctx.moveTo(mirrorIndexX, indexY);
+                      ctx.lineTo(mirrorMiddleX, middleY);
+                      ctx.lineTo(mirrorRingX, ringY);
+                      ctx.stroke();
+
+                      ctx.fillStyle = "#00e5ff";
+                      ctx.font = "bold 11px monospace";
+                      ctx.fillText(
+                        "🖖 RIGHT 'W' [ENABLE FIREWALL]",
+                        mirrorIndexX - 45,
+                        indexY - 20,
+                      );
+
+                      currentRightTag = "W (FIREWALL)";
+                      setRightHandStatus("🖖 RIGHT 'W': ENABLING FIREWALL SHIELD");
+
+                      if (now - lastActionTimeRef.current.firewall > 1100) {
+                        lastActionTimeRef.current.firewall = now;
+                        const ok = firewall();
+                        if (ok) {
+                          showGesture("🛡️ RIGHT HAND 'W' SIGN: EMERGENCY FIREWALL SHIELD ENABLED!");
+                        }
+                      }
+                      return;
+                    }
+
+                    // B. RIGHT 'V' SIGN -> ISOLATE
                     if (isVSign) {
                       rightVCountRef.current++;
                       rightPinchHoldFramesRef.current = 0;
@@ -824,16 +895,21 @@ export function MediaPipeController() {
                     // CLEAR GESTURE DISCRIMINATION:
                     // 1. POINTING: Index extended forward, other fingers folded, thumb away from index tip
                     const isPointing =
-                      !isVSign && indexExtended && !middleExtended && rawThumbIndexDist > 0.055;
+                      !isVSign &&
+                      !isWSign &&
+                      indexExtended &&
+                      !middleExtended &&
+                      rawThumbIndexDist > 0.055;
 
                     // 2. PINCHING: Thumb tip and index tip touch together closely, NOT pointing outward
                     const isPinched =
                       !isVSign &&
+                      !isWSign &&
                       !isPointing &&
                       rawThumbIndexDist < 0.052 &&
                       normThumbIndexDist < 0.32;
 
-                    // B. POINT TO AIM & SELECT DEVICES (Silky Smooth Circular Reticle)
+                    // C. POINT TO AIM & SELECT DEVICES (Works smoothly from long range to each component)
                     if (isPointing) {
                       rightPinchHoldFramesRef.current = 0; // Strict reset: Never pinch while pointing
 
@@ -849,11 +925,19 @@ export function MediaPipeController() {
                       ctx.arc(mirrorIndexX, indexY, 12, 0, Math.PI * 2);
                       ctx.stroke();
 
-                      const targetX = (1 - index.x) * window.innerWidth;
-                      const targetY = index.y * window.innerHeight;
+                      // Center-relative amplified screen mapping so finger reaches all servers, routers, and workstations
+                      const normX = (1 - index.x - 0.5) * 2.8 + 0.5;
+                      const normY = (index.y - 0.5) * 2.5 + 0.5;
+                      const targetX = Math.max(
+                        8,
+                        Math.min(window.innerWidth - 8, normX * window.innerWidth),
+                      );
+                      const targetY = Math.max(
+                        8,
+                        Math.min(window.innerHeight - 8, normY * window.innerHeight),
+                      );
 
-                      // Silky smooth dampening filter (eliminates webcam hand tremor)
-                      const smoothFactor = 0.22;
+                      const smoothFactor = 0.32;
                       smoothCrosshair.current.x +=
                         (targetX - smoothCrosshair.current.x) * smoothFactor;
                       smoothCrosshair.current.y +=
@@ -863,69 +947,45 @@ export function MediaPipeController() {
                       const curY = smoothCrosshair.current.y;
 
                       const nodeScreenCoords = useGame.getState().nodeScreenCoords;
-                      const missionProgress = useGame.getState().missionProgress;
-                      const activeIds = getActiveNodeIds(missionProgress);
-                      const currentSelected = useGame.getState().selected;
-
-                      let bestNodeId =
-                        currentSelected !== null && activeIds.includes(currentSelected)
-                          ? currentSelected
-                          : (activeIds[0] ?? 0);
+                      let bestNodeId: number | null = null;
                       let bestDist = 999999;
 
-                      // Dynamic exact screen projection from Three.js camera
-                      for (const id of activeIds) {
-                        const screenPos = nodeScreenCoords[id];
+                      // Check against ALL components in the office so point properly locks to every server, router, workstation
+                      for (const node of NETWORK.nodes) {
+                        const screenPos = nodeScreenCoords[node.id];
                         if (screenPos) {
                           const d = Math.hypot(curX - screenPos.x, curY - screenPos.y);
                           if (d < bestDist) {
                             bestDist = d;
-                            bestNodeId = id;
+                            bestNodeId = node.id;
                           }
                         }
                       }
 
-                      // Fallback if projection not yet initialized on first tick
-                      if (bestDist === 999999) {
-                        const normX = curX / window.innerWidth;
-                        const normY = curY / window.innerHeight;
-                        const screenAnchors: Record<number, { x: number; y: number }> = {
-                          0: { x: 0.24, y: 0.42 },
-                          1: { x: 0.24, y: 0.58 },
-                          2: { x: 0.24, y: 0.72 },
-                          3: { x: 0.24, y: 0.86 },
-                          4: { x: 0.5, y: 0.32 },
-                          5: { x: 0.6, y: 0.32 },
-                          6: { x: 0.4, y: 0.32 },
-                          8: { x: 0.45, y: 0.62 },
-                          9: { x: 0.72, y: 0.62 },
-                          10: { x: 0.45, y: 0.8 },
-                          11: { x: 0.72, y: 0.8 },
-                        };
-                        for (const id of activeIds) {
-                          const anchor = screenAnchors[id] || { x: 0.5, y: 0.5 };
-                          const d = Math.hypot(normX - anchor.x, normY - anchor.y);
-                          if (d < bestDist) {
-                            bestDist = d;
-                            bestNodeId = id;
+                      if (bestNodeId !== null) {
+                        const pointedNode = NETWORK.nodes[bestNodeId];
+                        if (pointedNode) {
+                          useGame.getState().select(pointedNode.id);
+                          let crossX = curX;
+                          let crossY = curY;
+                          const screenPos = nodeScreenCoords[pointedNode.id];
+                          if (screenPos && bestDist < 180) {
+                            const snapWeight = Math.max(0, 1 - bestDist / 180) * 0.52;
+                            crossX = curX * (1 - snapWeight) + screenPos.x * snapWeight;
+                            crossY = curY * (1 - snapWeight) + screenPos.y * snapWeight;
                           }
+                          useGame.getState().setPointingCrosshair({
+                            x: crossX,
+                            y: crossY,
+                            active: true,
+                            label: `${pointedNode.label} (${pointedNode.sublabel})`,
+                          });
                         }
-                      }
-
-                      const pointedNode = NETWORK.nodes[bestNodeId];
-                      if (pointedNode) {
-                        useGame.getState().select(pointedNode.id);
-                        useGame.getState().setPointingCrosshair({
-                          x: curX,
-                          y: curY,
-                          active: true,
-                          label: pointedNode.label,
-                        });
                       }
                       currentRightTag = "POINTING";
                     }
 
-                    // C. RIGHT PINCH -> SCAN / INVESTIGATE (Only when thumb & index deliberately touch)
+                    // D. RIGHT PINCH -> SCAN / INVESTIGATE (Only when thumb & index deliberately touch)
                     else if (isPinched) {
                       rightPinchHoldFramesRef.current++;
 
@@ -973,7 +1033,7 @@ export function MediaPipeController() {
                       }
                     }
 
-                    // D. 4 RIGHT FINGERS -> DISMISS / CLOSE INVESTIGATING BOX (Thumb must be tucked!)
+                    // E. 4 RIGHT FINGERS -> DISMISS / CLOSE INVESTIGATING BOX (Thumb must be tucked!)
                     else if (isFourFingers && !isFiveFingers && !isVSign && !isWSign) {
                       rightPinchHoldFramesRef.current = 0;
                       rightVCountRef.current = 0;
@@ -995,33 +1055,6 @@ export function MediaPipeController() {
                           useGame.getState().closeInvestigationModal();
                           showGesture("🖐️ 4 RIGHT FINGERS: DISMISSED INVESTIGATION BOX");
                           sfx.select();
-                        }
-                      }
-                    }
-
-                    // E. RIGHT 5 FINGERS (OPEN PALM) -> ACTIVATE EMERGENCY ZERO-TRUST FIREWALL SHIELD
-                    else if (isFiveFingers) {
-                      rightPinchHoldFramesRef.current = 0;
-                      rightVCountRef.current = 0;
-
-                      ctx.strokeStyle = "#00e5ff";
-                      ctx.lineWidth = 3;
-                      ctx.strokeRect(mirrorIndexX - 45, indexY - 25, 95, 30);
-
-                      ctx.fillStyle = "#00e5ff";
-                      ctx.font = "bold 11px monospace";
-                      ctx.fillText("🖐️ PALM [FIREWALL]", mirrorIndexX - 40, indexY - 6);
-
-                      currentRightTag = "5 FINGERS (FIREWALL)";
-                      setRightHandStatus("🖐️ 5 FINGERS: FIREWALL SHIELD ACTIVATING");
-
-                      if (now - lastActionTimeRef.current.firewall > 1200) {
-                        lastActionTimeRef.current.firewall = now;
-                        const ok = firewall();
-                        if (ok) {
-                          showGesture(
-                            "🛡️ 5-FINGER PALM: EMERGENCY FIREWALL SHIELD ACTIVE (THREATS FROZEN!)",
-                          );
                         }
                       }
                     } else {
@@ -1198,9 +1231,10 @@ export function MediaPipeController() {
             <canvas ref={canvasRef} className="absolute inset-0 h-full w-full object-cover" />
 
             {cameraActive && (
-              <div className="absolute bottom-1 left-1 rounded bg-black/85 px-1.5 py-0.5 text-[8.5px] text-muted-foreground flex gap-1.5">
-                <span className="text-[#c084fc] font-bold">● Left: V(In)/W(Out)</span>
-                <span className="text-[#22c55e] font-bold">● Right: V(Isolate)</span>
+              <div className="absolute bottom-1 left-1 rounded bg-black/85 px-1.5 py-0.5 text-[8.5px] text-muted-foreground flex gap-1.5 flex-wrap">
+                <span className="text-[#c084fc] font-bold">● Left: 360° Orbit</span>
+                <span className="text-[#00e5ff] font-bold">● Right: 'W'(Shield)</span>
+                <span className="text-[#22c55e] font-bold">● 'V'(Isolate)</span>
                 <span className="text-[#f59e0b] font-bold">● Pinch(Scan)</span>
               </div>
             )}
@@ -1212,8 +1246,8 @@ export function MediaPipeController() {
                   Turn on Webcam for AI Gestures
                 </p>
                 <p className="text-[9px] text-muted-foreground mt-0.5 leading-tight">
-                  👈 Left hand: 'V' zooms in · 'W' zooms out · 👉 Right hand: 'V' isolates · Pinch
-                  investigates
+                  👈 Left hand: 360° rotate up/down/left/right · 👉 Right hand: 'W' enables firewall
+                  · 'V' isolates · Pinch scans
                 </p>
                 <div className="mt-2.5 flex gap-1.5">
                   <Button
@@ -1247,29 +1281,31 @@ export function MediaPipeController() {
               <button
                 className="flex items-center justify-center gap-1.5 rounded border border-purple-500/50 bg-secondary/80 py-1.5 hover:bg-purple-500/20 hover:border-purple-400 transition-all text-foreground font-semibold shadow-sm"
                 onClick={() => {
-                  adjustZoom(-3.0);
-                  showGesture("👈 LEFT HAND: 'V' SIGN [ZOOM IN]");
+                  adjustOrbit(0.3, 0);
+                  showGesture("👈 LEFT HAND: 360° ORBIT");
                 }}
-                title="Left Hand shows 'V' sign to zoom in"
+                title="Left Hand moves up/down/left/right for 360° 3D orbit"
               >
-                <ZoomIn className="size-3.5 text-purple-400" />
-                <span>👈 Left: 'V' Zoom In</span>
-              </button>
-
-              <button
-                className="flex items-center justify-center gap-1.5 rounded border border-purple-500/50 bg-secondary/80 py-1.5 hover:bg-purple-500/20 hover:border-purple-400 transition-all text-foreground font-semibold shadow-sm"
-                onClick={() => {
-                  adjustZoom(3.0);
-                  showGesture("👈 LEFT HAND: 'W' SIGN [ZOOM OUT]");
-                }}
-                title="Left Hand shows 'W' sign to zoom out"
-              >
-                <ZoomOut className="size-3.5 text-purple-400" />
-                <span>👈 Left: 'W' Zoom Out</span>
+                <RotateCw className="size-3.5 text-purple-400" />
+                <span>👈 Left: 360° Orbit</span>
               </button>
 
               <button
                 className="flex items-center justify-center gap-1.5 rounded border border-cyan-500/50 bg-secondary/80 py-1.5 hover:bg-cyan-500/20 hover:border-cyan-400 transition-all text-foreground font-semibold shadow-sm"
+                onClick={() => {
+                  const ok = firewall();
+                  if (ok) {
+                    showGesture("🛡️ RIGHT HAND 'W' SIGN: EMERGENCY FIREWALL SHIELD ENABLED!");
+                  }
+                }}
+                title="Show 'W' sign with Right Hand to activate Emergency Zero-Trust Firewall"
+              >
+                <Zap className="size-3.5 text-cyan-400" />
+                <span>🖖 Right: 'W' Shield</span>
+              </button>
+
+              <button
+                className="flex items-center justify-center gap-1.5 rounded border border-amber-500/50 bg-secondary/80 py-1.5 hover:bg-amber-500/20 hover:border-amber-400 transition-all text-foreground font-semibold shadow-sm"
                 onClick={() => {
                   const selected = useGame.getState().selected;
                   const ok = investigate(selected !== null ? selected : undefined);
@@ -1282,7 +1318,7 @@ export function MediaPipeController() {
                 }}
                 title="Right Hand pinches thumb and index to scan malware dossier"
               >
-                <Zap className="size-3.5 text-cyan-400" />
+                <Zap className="size-3.5 text-amber-400" />
                 <span>👉 Right: Pinch Scan</span>
               </button>
 

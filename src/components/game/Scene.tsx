@@ -43,13 +43,26 @@ function ScreenProjector() {
   useFrame(() => {
     const coords: Record<number, { x: number; y: number }> = {};
     const v = new THREE.Vector3();
+    const camPos = camera.position;
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir);
+
     NETWORK.nodes.forEach((node) => {
-      v.set(node.pos[0], node.pos[1] + (node.kind === "server" ? 2.2 : 1.2), node.pos[2]);
-      v.project(camera);
-      if (v.z < 1) {
-        const x = ((v.x + 1) * size.width) / 2;
-        const y = ((-v.y + 1) * size.height) / 2;
-        coords[node.id] = { x, y };
+      const nodePos = new THREE.Vector3(
+        node.pos[0],
+        node.pos[1] + (node.kind === "server" ? 2.0 : 1.2),
+        node.pos[2],
+      );
+      // Ensure node is in front of camera plane (not behind viewer)
+      const toNode = nodePos.clone().sub(camPos);
+      if (toNode.dot(camDir) > 0.2) {
+        v.copy(nodePos);
+        v.project(camera);
+        if (v.z >= -1 && v.z <= 1) {
+          const x = ((v.x + 1) * size.width) / 2;
+          const y = ((-v.y + 1) * size.height) / 2;
+          coords[node.id] = { x, y };
+        }
       }
     });
     useGame.getState().setNodeScreenCoords(coords);
@@ -1043,17 +1056,31 @@ function InteractiveDevice({ index }: { index: number }) {
       position={def.pos}
       ref={group}
       onClick={(e) => {
-        if (phase !== "playing" || !isActive) return;
+        if (phase !== "playing") return;
         e.stopPropagation();
         useGame.getState().select(index);
       }}
       onPointerOver={() => {
-        if (isActive) document.body.style.cursor = "pointer";
+        document.body.style.cursor = "pointer";
       }}
       onPointerOut={() => {
         document.body.style.cursor = "";
       }}
     >
+      {/* Invisible Full-Body Hitbox for 100% Reliable Raycast & Click Target */}
+      <mesh position={[0, def.kind === "server" ? 1.9 : 0.9, 0]} visible={false}>
+        <boxGeometry
+          args={
+            def.kind === "server"
+              ? [3.2, 4.4, 2.8]
+              : def.kind === "router"
+                ? [3.0, 2.6, 2.4]
+                : [2.8, 2.2, 2.4]
+          }
+        />
+        <meshBasicMaterial transparent opacity={0} />
+      </mesh>
+
       {def.kind === "server" ? (
         <CyberTeamServerCabinet accent={componentColor} />
       ) : def.kind === "router" ? (
@@ -1227,7 +1254,125 @@ function CyberZeroTrustFirewallShield() {
 }
 
 // -------------------------------------------------------------------------
-// STABLE, SILKY-SMOOTH CAMERA CONTROLLER
+// 3D CAMERA TARGETING LASER & RETICLE (Visualizes point from camera to component)
+// -------------------------------------------------------------------------
+function CameraTargetingLaser() {
+  const { camera } = useThree();
+  const selected = useGame((s) => s.selected);
+  const pointing = useGame((s) => s.pointingCrosshair?.active);
+  const reticleRef = useRef<THREE.Group>(null);
+  const targetNode = selected !== null ? NETWORK.nodes[selected] : null;
+
+  useFrame(({ clock }) => {
+    if (reticleRef.current) {
+      reticleRef.current.rotation.y = clock.elapsedTime * 2.5;
+    }
+  });
+
+  if (!pointing || !targetNode) return null;
+
+  const targetY = targetNode.kind === "server" ? 2.4 : targetNode.kind === "router" ? 1.4 : 1.3;
+  const targetPos = new THREE.Vector3(
+    targetNode.pos[0],
+    targetNode.pos[1] + targetY,
+    targetNode.pos[2],
+  );
+
+  // Position starting just in front of camera
+  const camDir = new THREE.Vector3();
+  camera.getWorldDirection(camDir);
+  const startPos = camera.position
+    .clone()
+    .add(camDir.multiplyScalar(0.7))
+    .add(new THREE.Vector3(0, -0.15, 0));
+
+  return (
+    <group>
+      {/* 3D Gold Aiming Beam from Camera Point to Component */}
+      <Line
+        points={[
+          [startPos.x, startPos.y, startPos.z],
+          [targetPos.x, targetPos.y, targetPos.z],
+        ]}
+        color="#facc15"
+        lineWidth={3.5}
+        transparent
+        opacity={0.85}
+      />
+      {/* Holographic Target Reticle hovering at the component */}
+      <group position={[targetPos.x, targetPos.y, targetPos.z]} ref={reticleRef}>
+        <mesh rotation-x={Math.PI / 2}>
+          <ringGeometry args={[0.75, 0.85, 32]} />
+          <meshBasicMaterial color="#facc15" toneMapped={false} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh>
+          <octahedronGeometry args={[0.22, 0]} />
+          <meshBasicMaterial color="#facc15" wireframe toneMapped={false} />
+        </mesh>
+      </group>
+      {/* Floating Range & Locked Badge in 3D */}
+      <Text
+        position={[targetPos.x, targetPos.y + 1.1, targetPos.z]}
+        fontSize={0.36}
+        color="#facc15"
+        anchorX="center"
+        outlineWidth={0.035}
+        outlineColor="#0f172a"
+      >
+        {`[ LOCKED: ${targetNode.label} ]`}
+      </Text>
+    </group>
+  );
+}
+
+// -------------------------------------------------------------------------
+// 3D CAMERA POINTING RAYCASTER (Detects point from camera to component in 3D)
+// -------------------------------------------------------------------------
+function CameraPointingRaycaster() {
+  const { camera, size } = useThree();
+  const pointingCrosshair = useGame((s) => s.pointingCrosshair);
+  const phase = useGame((s) => s.phase);
+  const isInvestigating = useGame((s) => s.investigationModalOpen);
+
+  useFrame(() => {
+    if (phase !== "playing" || isInvestigating || !pointingCrosshair?.active) return;
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2(
+      (pointingCrosshair.x / size.width) * 2 - 1,
+      -(pointingCrosshair.y / size.height) * 2 + 1,
+    );
+    raycaster.setFromCamera(mouse, camera);
+
+    let bestId: number | null = null;
+    let closestRayDist = 999999;
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir);
+
+    NETWORK.nodes.forEach((node) => {
+      const nodeCenter = new THREE.Vector3(
+        node.pos[0],
+        node.pos[1] + (node.kind === "server" ? 1.9 : 1.1),
+        node.pos[2],
+      );
+      if (nodeCenter.clone().sub(camera.position).dot(camDir) > 0) {
+        const rayDist = raycaster.ray.distanceToPoint(nodeCenter);
+        if (rayDist < closestRayDist && rayDist < 4.2) {
+          closestRayDist = rayDist;
+          bestId = node.id;
+        }
+      }
+    });
+
+    if (bestId !== null && useGame.getState().selected !== bestId) {
+      useGame.getState().select(bestId);
+    }
+  });
+
+  return null;
+}
+
+// -------------------------------------------------------------------------
+// STABLE, SILKY-SMOOTH CAMERA CONTROLLER (Full 360° Azimuth & Ergonomic Polar Elevation)
 // -------------------------------------------------------------------------
 interface OrbitControlsRef {
   getDistance: () => number;
@@ -1236,6 +1381,7 @@ interface OrbitControlsRef {
   setAzimuthalAngle: (angle: number) => void;
   setPolarAngle: (angle: number) => void;
   getAzimuthalAngle: () => number;
+  getPolarAngle: () => number;
   update: () => void;
 }
 
@@ -1248,7 +1394,7 @@ function CameraController() {
   const isInvestigating = useGame((s) => s.investigationModalOpen);
   const isFirstMount = useRef(true);
 
-  // Silky-smooth zoom and distance interpolation that reliably affects the 3D scene
+  // Silky-smooth zoom, azimuth (left/right 360°), and polar (up/down 360°) interpolation
   useFrame(() => {
     if (!orbitRef.current || isInvestigating) return; // Freeze 3D camera completely while investigating!
     const target = new THREE.Vector3(0, 1.2, 0);
@@ -1275,10 +1421,19 @@ function CameraController() {
     }
 
     try {
+      // Horizontal 360° rotation (left and right)
       const curAz = orbitRef.current.getAzimuthalAngle();
       const diffAz = cameraAzimuth - curAz;
-      if (Math.abs(diffAz) > 0.01) {
-        orbitRef.current.setAzimuthalAngle(curAz + diffAz * 0.15);
+      if (Math.abs(diffAz) > 0.005) {
+        orbitRef.current.setAzimuthalAngle(curAz + diffAz * 0.18);
+        orbitRef.current.update();
+      }
+
+      // Vertical 360° rotation (up and down)
+      const curPol = orbitRef.current.getPolarAngle();
+      const diffPol = cameraPolar - curPol;
+      if (Math.abs(diffPol) > 0.005) {
+        orbitRef.current.setPolarAngle(curPol + diffPol * 0.18);
         orbitRef.current.update();
       }
     } catch {
@@ -1293,10 +1448,10 @@ function CameraController() {
       enablePan={false}
       enableDamping={true}
       dampingFactor={0.08}
-      minDistance={6}
+      minDistance={10}
       maxDistance={45}
-      minPolarAngle={0.2}
-      maxPolarAngle={Math.PI / 2.1}
+      minPolarAngle={0.55}
+      maxPolarAngle={1.3}
       target={[0, 1.2, 0]}
     />
   );
@@ -1314,7 +1469,7 @@ export function GameScene() {
     <Canvas
       shadows
       dpr={[1, 1.5]}
-      camera={{ position: [0, 13, 22], fov: 44, near: 0.1, far: 500 }}
+      camera={{ position: [0, 13.5, 25], fov: 46, near: 0.1, far: 500 }}
       onPointerMissed={() => useGame.getState().select(null)}
       gl={{ antialias: true }}
     >
@@ -1342,6 +1497,9 @@ export function GameScene() {
       <CyberCornerLoungeWithTV />
       <CyberZeroTrustFirewallShield />
 
+      {/* 3D Laser Targeting Beam from camera point to component */}
+      <CameraTargetingLaser />
+
       {/* Continuous animated green laser data links between active devices */}
       {activeLinks.map(([a, b]) => (
         <CyberNetworkLink key={`${a}-${b}`} a={a} b={b} />
@@ -1354,6 +1512,7 @@ export function GameScene() {
 
       <MissionLoop />
       <ScreenProjector />
+      <CameraPointingRaycaster />
       <CameraController />
     </Canvas>
   );

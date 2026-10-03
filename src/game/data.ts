@@ -183,47 +183,45 @@ export const TOTAL_THREATS = CAMPAIGN.length;
 export const OPENING_DELAY = 5;
 export const WAVE_DELAY = 8;
 
-// Dynamic Network Expansion with Mission Progress:
-// Tier 0 (0/5): 1 Server (SRV-01: 0), 1 PC (WS-01: 8), 1 Router (RTR-01: 4)
-// Tier 1 (1/5): +1 PC (WS-02: 9) -> 4 devices
-// Tier 2 (2/5): +1 Server (SRV-02: 1) -> 5 devices
-// Tier 3 (3/5): +1 Router (WIFI-01: 5) -> 6 devices
-// Tier 4 (4/5): +1 PC (WS-03: 10) & +1 Server (SRV-03: 2) -> 8 devices
-// Tier 5 (5/5): +1 PC (WS-04: 11), +1 Server (SRV-04: 3), +1 Router (RTR-02: 6) -> 11 devices
-export function getActiveNodeIds(progress: number): number[] {
-  if (progress <= 0) return [0, 8, 4];
-  if (progress === 1) return [0, 8, 9, 4];
-  if (progress === 2) return [0, 1, 8, 9, 4];
-  if (progress === 3) return [0, 1, 8, 9, 4, 5];
-  if (progress === 4) return [0, 1, 2, 8, 9, 10, 4, 5];
-  return [0, 1, 2, 3, 8, 9, 10, 11, 4, 5, 6];
+// ALL SERVERS (0-3), ROUTERS (4-7), and WORKSTATIONS (8-15) ARE FULLY INTEGRATED & POINTABLE
+export function getActiveNodeIds(_progress?: number): number[] {
+  return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 }
 
-export function getActiveLinks(progress: number): [number, number][] {
-  const activeSet = new Set(getActiveNodeIds(progress));
+export function getActiveLinks(_progress?: number): [number, number][] {
+  const activeSet = new Set(getActiveNodeIds());
   const candidateLinks: [number, number][] = [
+    [0, 1],
+    [1, 2],
+    [2, 3],
+    [4, 5],
+    [5, 6],
+    [6, 7],
+    [0, 4],
+    [3, 7],
     [0, 8],
     [8, 4],
-    [0, 4],
-    [8, 9],
-    [4, 9],
-    [0, 9],
     [0, 1],
     [1, 8],
-    [1, 4],
-    [4, 5],
+    [1, 10],
+    [2, 12],
+    [1, 14],
+    [4, 9],
     [5, 9],
-    [1, 5],
-    [1, 2],
+    [5, 11],
+    [6, 13],
+    [5, 15],
+    [8, 14],
+    [9, 14],
+    [10, 15],
+    [11, 15],
+    [14, 15],
+    [8, 9],
     [2, 10],
-    [8, 10],
-    [5, 10],
-    [2, 3],
     [3, 11],
     [5, 6],
     [6, 11],
     [10, 11],
-    [0, 3],
     [4, 6],
   ];
   return candidateLinks.filter(([a, b]) => activeSet.has(a) && activeSet.has(b));
@@ -235,7 +233,7 @@ function buildNetwork() {
 
   // =========================================================================
   // 1. DEDICATED DATABASE & SERVER ROOM (LEFT WING DATACENTER VAULT)
-  // Not beside computers - organized in their own secure server room!
+  // Perfectly spaced and framed within camera point and FOV
   // =========================================================================
   const servers = [
     {
@@ -245,7 +243,7 @@ function buildNetwork() {
       sublabel: "Core SQL Database",
       department: "Datacenter Vault",
       ip: "10.20.10.14",
-      pos: [-15.5, 0, -6] as [number, number, number],
+      pos: [-13.2, 0, -5.5] as [number, number, number],
     },
     {
       id: 1,
@@ -254,7 +252,7 @@ function buildNetwork() {
       sublabel: "SAN Storage Cluster",
       department: "Datacenter Vault",
       ip: "10.20.10.88",
-      pos: [-15.5, 0, -1.8] as [number, number, number],
+      pos: [-13.2, 0, -1.8] as [number, number, number],
     },
     {
       id: 2,
@@ -263,7 +261,7 @@ function buildNetwork() {
       sublabel: "Active Directory IAM",
       department: "Datacenter Vault",
       ip: "10.20.10.22",
-      pos: [-15.5, 0, 2.4] as [number, number, number],
+      pos: [-13.2, 0, 1.8] as [number, number, number],
     },
     {
       id: 3,
@@ -272,13 +270,13 @@ function buildNetwork() {
       sublabel: "SIEM Threat Collector",
       department: "Datacenter Vault",
       ip: "10.20.10.50",
-      pos: [-15.5, 0, 6.6] as [number, number, number],
+      pos: [-13.2, 0, 5.5] as [number, number, number],
     },
   ];
 
   // =========================================================================
   // 2. DEDICATED WIFI & NETWORK NOC BAY (RIGHT WING COMMUNICATIONS TOWER)
-  // Not beside computers - organized in their own telecommunications wing!
+  // Perfectly spaced and framed within camera point and FOV
   // =========================================================================
   const routers = [
     {
@@ -288,7 +286,7 @@ function buildNetwork() {
       sublabel: "Enterprise Gateway",
       department: "NOC Network Bay",
       ip: "10.20.10.1",
-      pos: [15.5, 0, -6] as [number, number, number],
+      pos: [13.2, 0, -5.5] as [number, number, number],
     },
     {
       id: 5,
@@ -297,7 +295,7 @@ function buildNetwork() {
       sublabel: "WiFi 7 Mesh AP-North",
       department: "NOC Network Bay",
       ip: "10.20.10.2",
-      pos: [15.5, 0, -1.8] as [number, number, number],
+      pos: [13.2, 0, -1.8] as [number, number, number],
     },
     {
       id: 6,
@@ -306,7 +304,7 @@ function buildNetwork() {
       sublabel: "Fiber Distribution",
       department: "NOC Network Bay",
       ip: "10.20.10.3",
-      pos: [15.5, 0, 2.4] as [number, number, number],
+      pos: [13.2, 0, 1.8] as [number, number, number],
     },
     {
       id: 7,
@@ -315,7 +313,7 @@ function buildNetwork() {
       sublabel: "WiFi 7 Mesh AP-South",
       department: "NOC Network Bay",
       ip: "10.20.10.4",
-      pos: [15.5, 0, 6.6] as [number, number, number],
+      pos: [13.2, 0, 5.5] as [number, number, number],
     },
   ];
 

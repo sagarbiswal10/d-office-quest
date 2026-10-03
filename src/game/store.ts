@@ -243,11 +243,11 @@ export const useGame = create<GameState>((set, get) => ({
 
   cameraAzimuth: 0,
   cameraPolar: 0.95,
-  cameraDistance: 24,
+  cameraDistance: 27,
   adjustOrbit: (deltaAzimuth, deltaPolar) => {
     set((s) => ({
       cameraAzimuth: s.cameraAzimuth + deltaAzimuth,
-      cameraPolar: Math.max(0.35, Math.min(1.42, s.cameraPolar + deltaPolar)),
+      cameraPolar: Math.max(0.55, Math.min(1.3, s.cameraPolar + deltaPolar)),
     }));
   },
   adjustZoom: (delta) => {

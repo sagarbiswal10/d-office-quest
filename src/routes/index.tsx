@@ -10,7 +10,6 @@ import { AlertTriangle, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/")({
-  ssr: false,
   head: () => ({
     meta: [
       { title: "Cyber Raid — 3D SOC Defense Game with AI Camera Gestures" },
@@ -78,7 +77,28 @@ class SceneErrorBoundary extends React.Component<
 }
 
 function Game() {
+  const [mounted, setMounted] = React.useState(false);
   const phase = useGame((s) => s.phase);
+
+  React.useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return (
+      <main className="fixed inset-0 flex items-center justify-center bg-[#080e14] text-cyan-400 font-mono select-none">
+        <div className="flex flex-col items-center gap-3 panel p-6 border-cyan-500/40 bg-black/85">
+          <div className="size-8 animate-spin rounded-full border-2 border-cyan-400 border-t-transparent" />
+          <div className="font-display font-bold tracking-wider text-sm text-cyan-200 uppercase">
+            Initializing Cyber Raid SOC...
+          </div>
+          <div className="text-[11px] text-zinc-400">
+            Loading 3D Office Environment & Defense Grid
+          </div>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="fixed inset-0 overflow-hidden bg-background text-foreground font-mono select-none">
